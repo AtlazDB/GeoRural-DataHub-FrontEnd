@@ -21,8 +21,8 @@ import {
   executarColeta,
 } from '@/services/fontesService'
 import { processarArquivo, excluirArquivo } from '@/services/arquivosService'
-import { processaAoReceber } from '@/utils/processamento'
-import { formatarNumero, formatarDataHora } from '@/utils/formato'
+import { ehProcessavel } from '@/utils/processamento'
+import { formatarDataHora } from '@/utils/formato'
 
 /**
  * ==================================================================
@@ -276,24 +276,18 @@ function testarLinkDaFonte() {
 /**
  * "Executar agora" de uma fonte por link.
  *
- * Com o Airflow ligado, o back só põe o pedido na fila (SOLICITADA, 202): a
- * coleta pagina o serviço e pode levar horas. A fonte fica "coletando" e a
- * consulta periódica mostra o andamento (fonte.ultimaColetaMensagem); quando
- * o arquivo chega na zona bruta, o próprio Airflow o processa.
- *
- * Sem o Airflow, o back baixa o link na hora. Daí em diante o arquivo segue
- * igual a um upload, inclusive o processamento automático (ver enviar()). Se
- * o conteúdo for igual ao da última coleta, nada é gravado e o aviso diz
- * "sem mudança".
+ * O back só põe o pedido na fila do Airflow (SOLICITADA, 202): a coleta
+ * pagina o serviço e pode levar horas. A fonte fica "coletando" e a consulta
+ * periódica mostra o andamento (fonte.ultimaColetaMensagem); quando o arquivo
+ * chega na zona bruta, o próprio Airflow o processa.
  */
 async function executar(fonte) {
   executandoId.value = fonte.id
   try {
-    const { resultado, mensagem, arquivo } = await executarColeta(fonte.id)
-    avisar('ok', resultado === 'SEM_MUDANCA' ? `Sem mudança: ${mensagem}` : mensagem)
-    selecionada.value = fonte // mostra os arquivos da fonte que acabou de ser coletada
+    const { mensagem } = await executarColeta(fonte.id)
+    avisar('ok', mensagem)
+    selecionada.value = fonte // mostra o andamento da fonte que acabou de ser pedida
     await atualizar()
-    if (resultado === 'RECEBIDO' && processaAoReceber(fonte, arquivo)) processar(arquivo)
   } catch (e) {
     avisar('erro', e.message)
   } finally {
@@ -347,9 +341,9 @@ async function enviar(arquivo) {
     uploadRef.value.limpar()
     avisar('ok', 'Arquivo enviado.')
 
-    // Sem await de propósito: o aviso acima aparece na hora e o
-    // processamento segue em segundo plano (ver processar()).
-    if (processaAoReceber(fonte, recebido)) processar(recebido)
+    // O Airflow pega o arquivo sozinho (ele chega RECEBIDO); processar() só
+    // põe a linha do arquivo no acompanhamento da fila. Sem await de propósito.
+    if (ehProcessavel(recebido)) processar(recebido)
   } catch (e) {
     avisar('erro', e.message)
   } finally {
@@ -359,14 +353,10 @@ async function enviar(arquivo) {
 }
 
 /**
- * Manda o back-end processar um arquivo do CAR (.zip).
- *
- * A chamada é síncrona e pode levar muitos minutos, então quem chama esta
- * função NÃO usa await — a tela continua respondendo. O andamento aparece
- * pela consulta periódica (logo abaixo); o resultado final chega aqui.
- *
- * Atenção: REJEITADO volta com HTTP 200, então não cai no catch. O catch
- * só pega erro de requisição (400, 404, 409, servidor fora do ar...).
+ * Põe um arquivo na fila do Airflow (o back só marca RECEBIDO e responde na
+ * hora). O processamento corre fora desta chamada: o andamento e o resultado
+ * chegam pela consulta periódica (ver acompanharFilaAirflow()). O catch pega
+ * erro de requisição (404, 409 já em processamento, servidor fora do ar...).
  */
 async function processar(arquivo) {
   const id = arquivo.id
@@ -375,27 +365,11 @@ async function processar(arquivo) {
   emProcessamento.value.push(id)
   delete resultados.value[id]
   try {
-    const resposta = await processarArquivo(id)
-        if (resposta.status === 'PROCESSADO') {
-      concluir(
-        arquivo,
-        'ok',
-        `Processado: ${formatarNumero(resposta.registrosLidos)} lidos · ` +
-          `${formatarNumero(resposta.registrosValidos)} válidos · ` +
-          `${formatarNumero(resposta.registrosInvalidos)} inválidos.`,
-      )
-    } else if (resposta.status === 'REJEITADO') {
-      concluir(arquivo, 'erro', `Rejeitado: ${resposta.mensagemErro}`)
-    } else if (resposta.status === 'AGUARDANDO_MAPEAMENTO') {
-      concluir(arquivo, 'erro', 'Há colunas sem mapeamento. Mapeie pelo botão # e processe de novo.')
-    } else {
-      // 202: o processamento foi aceito e corre fora desta chamada. O resultado
-      // chega pela consulta periódica (ver atualizar()).
-      naFilaAirflow.value[id] = arquivo
-      resultados.value[id] = {
-        tipo: 'ok',
-        texto: 'Na fila do Airflow: o processamento começa em até 2 minutos.',
-      }
+    await processarArquivo(id)
+    naFilaAirflow.value[id] = arquivo
+    resultados.value[id] = {
+      tipo: 'ok',
+      texto: 'Na fila do Airflow: o processamento começa em até 2 minutos.',
     }
   } catch (e) {
     concluir(arquivo, 'erro', e.message)

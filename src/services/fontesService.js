@@ -138,19 +138,15 @@ export async function testarLink(dados) {
  * "Executar agora" de uma fonte por link.
  *
  *   POST /fontes/:id/executar
- *        202 → { resultado: 'SOLICITADA', mensagem }           (Airflow ligado: coleta na fila)
- *        201 → { resultado: 'RECEBIDO', mensagem, arquivo }     (arquivo novo)
- *        200 → { resultado: 'SEM_MUDANCA', mensagem, arquivo } (igual à última coleta)
- *        400 → fonte sem link ou link inválido
- *        502 → o servidor de origem falhou, ou cortou a resposta no limite por pedido
+ *        202 → { resultado: 'SOLICITADA', mensagem }   (coleta na fila do Airflow)
+ *        400 → fonte sem link
  *
- * Com o Airflow ligado, a resposta é imediata e o andamento aparece na fonte
- * (coletando, ultimaColetaMensagem, ultimaColetaEm). Sem ele, o download
- * acontece dentro da requisição: um arquivo grande demora, por isso o timeout
- * é maior que o padrão do http.js (60 s), como no upload.
+ * A resposta é imediata: o andamento aparece na fonte (coletando,
+ * ultimaColetaMensagem, ultimaColetaEm), e o arquivo coletado é processado
+ * pelo próprio Airflow.
  */
 export async function executarColeta(fonteId) {
-  const { data } = await http.post(`/fontes/${fonteId}/executar`, null, { timeout: 10 * 60_000 })
+  const { data } = await http.post(`/fontes/${fonteId}/executar`)
   return data
 }
 
