@@ -276,7 +276,7 @@ function testarLinkDaFonte() {
 /**
  * "Executar agora" de uma fonte por link.
  *
- * O back só põe o pedido na fila do Airflow (SOLICITADA, 202): a coleta
+ * O back só dispara a DAG no Airflow (SOLICITADA, 202): a coleta
  * pagina o serviço e pode levar horas. A fonte fica "coletando" e a consulta
  * periódica mostra o andamento (fonte.ultimaColetaMensagem); quando o arquivo
  * chega na zona bruta, o próprio Airflow o processa.
@@ -341,8 +341,8 @@ async function enviar(arquivo) {
     uploadRef.value.limpar()
     avisar('ok', 'Arquivo enviado.')
 
-    // O Airflow pega o arquivo sozinho (ele chega RECEBIDO); processar() só
-    // põe a linha do arquivo no acompanhamento da fila. Sem await de propósito.
+    // Nada roda sozinho no Airflow: é processar() que dispara o processamento
+    // e põe a linha do arquivo no acompanhamento. Sem await de propósito.
     if (ehProcessavel(recebido)) processar(recebido)
   } catch (e) {
     avisar('erro', e.message)
@@ -353,10 +353,10 @@ async function enviar(arquivo) {
 }
 
 /**
- * Põe um arquivo na fila do Airflow (o back só marca RECEBIDO e responde na
- * hora). O processamento corre fora desta chamada: o andamento e o resultado
- * chegam pela consulta periódica (ver acompanharFilaAirflow()). O catch pega
- * erro de requisição (404, 409 já em processamento, servidor fora do ar...).
+ * Dispara o processamento de um arquivo no Airflow (o back reserva, dispara e
+ * responde na hora). O processamento corre fora desta chamada: o andamento e o
+ * resultado chegam pela consulta periódica (ver acompanharFilaAirflow()). O catch
+ * pega erro de requisição (404, 409 já em processamento, 503 Airflow fora do ar...).
  */
 async function processar(arquivo) {
   const id = arquivo.id
@@ -369,7 +369,7 @@ async function processar(arquivo) {
     naFilaAirflow.value[id] = arquivo
     resultados.value[id] = {
       tipo: 'ok',
-      texto: 'Na fila do Airflow: o processamento começa em até 2 minutos.',
+      texto: 'Enviado ao Airflow.',
     }
   } catch (e) {
     concluir(arquivo, 'erro', e.message)
