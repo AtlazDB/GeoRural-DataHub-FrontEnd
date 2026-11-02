@@ -138,8 +138,9 @@ export async function testarLink(dados) {
  * "Executar agora" de uma fonte por link.
  *
  *   POST /fontes/:id/executar
- *        202 → { resultado: 'SOLICITADA', mensagem }   (coleta na fila do Airflow)
+ *        202 → { resultado: 'SOLICITADA', mensagem }   (coleta disparada no Airflow)
  *        400 → fonte sem link
+ *        503 → { mensagem }   (Airflow fora do ar)
  *
  * A resposta é imediata: o andamento aparece na fonte (coletando,
  * ultimaColetaMensagem, ultimaColetaEm), e o arquivo coletado é processado

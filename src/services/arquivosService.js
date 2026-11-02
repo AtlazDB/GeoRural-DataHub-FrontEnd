@@ -4,9 +4,10 @@ import http from './http'
  * Arquivos já recebidos na zona bruta.
  *
  *   POST /arquivos/:id/processar
- *        200 → { arquivoId, status: 'RECEBIDO' }   (na fila do Airflow)
+ *        200 → { arquivoId, status: 'PROCESSANDO' }   (Airflow disparado)
  *        404 → { mensagem }
  *        409 → { mensagem }   (o arquivo já está sendo processado)
+ *        503 → { mensagem }   (Airflow fora do ar: o arquivo fica RECEBIDO)
  *
  *   DELETE /arquivos/:id
  *        204 → (sem corpo)
@@ -18,7 +19,7 @@ import http from './http'
  */
 
 /**
- * Põe o arquivo na fila do Airflow, que o processa pelo mapeamento da fonte.
+ * Dispara o Airflow, que processa o arquivo pelo mapeamento da fonte.
  * A resposta é imediata; o andamento aparece no status do arquivo.
  *
  * @param {number} arquivoId
