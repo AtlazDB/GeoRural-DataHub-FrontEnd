@@ -53,7 +53,7 @@ function statusDe(arquivo) {
 
 function podeProcessar(arquivo) {
   return (
-    ehProcessavel(props.fonte, arquivo) &&
+    ehProcessavel(arquivo) &&
     ['RECEBIDO', 'AGUARDANDO_MAPEAMENTO', 'REJEITADO'].includes(statusDe(arquivo))
   )
 }
