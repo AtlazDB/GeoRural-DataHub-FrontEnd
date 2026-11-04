@@ -14,6 +14,10 @@
  *   POST   /fontes                  cadastra uma fonte
  *   POST   /fontes/:id/arquivos     envia um arquivo (multipart, campo "arquivo")
  *   DELETE /fontes/:id              remove uma fonte
+ *   GET    /indicators              lista os indicadores cadastrados
+ *   GET    /indicators/:code        detalhe de um indicador
+ *   POST   /indicators              cadastra um indicador
+ *   POST   /indicators/:code/deactivate   desativa (não apaga)
  */
 
 import express from 'express'
@@ -273,6 +277,117 @@ app.delete('/fontes/:id', comLatencia, (req, res) => {
   const i = fontes.findIndex((f) => f.id === Number(req.params.id))
   if (i === -1) return res.status(404).json({ mensagem: 'Fonte não encontrada.' })
   fontes.splice(i, 1)
+  res.status(204).end()
+})
+
+// ------------------------------------------------------------------
+// Indicadores cadastrados (US13) — mesmas regras do back, resumidas
+// ------------------------------------------------------------------
+const STATUS_FAIXA = ['CONFORME', 'ALERTA', 'CRITICO', 'VALIDACAO']
+const MODELOS = ['POINT_DENSITY', 'AREA_COVERAGE']
+
+const indicadores = [
+  {
+    code: 'DFOCO',
+    name: 'Densidade de focos de calor',
+    unit: 'focos/1000ha',
+    description: 'Focos do satélite de referência por mil hectares do imóvel.',
+    fonteId: 2,
+    calculationModel: 'POINT_DENSITY',
+    parameters: { factor: 1000 },
+    ranges: [
+      { status: 'CONFORME', limit: 5, includeLimit: true },
+      { status: 'ALERTA', limit: 20, includeLimit: false },
+      { status: 'CRITICO' },
+    ],
+    active: true,
+    createdAt: '2026-11-03T12:00:00.000Z',
+  },
+]
+
+const acharIndicador = (code) => indicadores.find((i) => i.code === code)
+
+/** Devolve a mensagem do primeiro problema nas faixas, ou null se estão certas. */
+function erroNasFaixas(ranges) {
+  if (!Array.isArray(ranges) || ranges.length === 0) return 'Informe pelo menos uma faixa.'
+  let anterior = null
+  for (let i = 0; i < ranges.length; i++) {
+    const { status, limit, includeLimit } = ranges[i]
+    const ultima = i === ranges.length - 1
+    if (!STATUS_FAIXA.includes(status)) {
+      return `Faixa ${i + 1}: o status deve ser ${STATUS_FAIXA.join(', ')}.`
+    }
+    if (ultima) {
+      if (limit != null) return `Faixa ${i + 1}: a última faixa não tem limite (vale para tudo acima da anterior).`
+    } else {
+      if (limit == null || includeLimit == null) {
+        return `Faixa ${i + 1}: só a última faixa pode ficar sem limit e includeLimit.`
+      }
+      if (anterior != null && Number(limit) <= anterior) {
+        return `Faixa ${i + 1}: o limite tem que ser maior que o da faixa anterior.`
+      }
+      anterior = Number(limit)
+    }
+  }
+  return null
+}
+
+app.get('/indicators', comLatencia, (_req, res) => {
+  res.json(indicadores)
+})
+
+app.get('/indicators/:code', comLatencia, (req, res) => {
+  const indicador = acharIndicador(req.params.code)
+  if (!indicador) return res.status(404).json({ mensagem: `Indicador "${req.params.code}" não encontrado.` })
+  res.json(indicador)
+})
+
+app.post('/indicators', comLatencia, (req, res) => {
+  const corpo = req.body ?? {}
+
+  const faltando = ['code', 'name', 'unit', 'calculationModel'].filter((c) => !corpo[c]?.trim?.())
+  if (corpo.fonteId == null) faltando.push('fonteId')
+  if (faltando.length) {
+    return res.status(400).json({ mensagem: `Preencha: ${faltando.join(', ')}.`, campos: faltando })
+  }
+  if (!/^[A-Z][A-Z0-9]{1,9}$/.test(corpo.code)) {
+    return res.status(400).json({
+      mensagem: 'A sigla deve começar com letra e ter de 2 a 10 letras maiúsculas ou números.',
+      campos: ['code'],
+    })
+  }
+  if (acharIndicador(corpo.code)) {
+    return res.status(409).json({ mensagem: `Já existe um indicador com a sigla "${corpo.code}".` })
+  }
+  if (!MODELOS.includes(corpo.calculationModel)) {
+    return res.status(400).json({
+      mensagem: 'Modelo de cálculo deve ser POINT_DENSITY ou AREA_COVERAGE.',
+      campos: ['calculationModel'],
+    })
+  }
+  const erro = erroNasFaixas(corpo.ranges)
+  if (erro) return res.status(400).json({ mensagem: erro, campos: ['ranges'] })
+
+  const novo = {
+    code: corpo.code,
+    name: corpo.name.trim(),
+    unit: corpo.unit.trim(),
+    description: corpo.description?.trim() || null,
+    fonteId: Number(corpo.fonteId),
+    calculationModel: corpo.calculationModel,
+    parameters: corpo.parameters ?? {},
+    ranges: corpo.ranges,
+    active: true,
+    createdAt: new Date().toISOString(),
+  }
+  indicadores.push(novo)
+  res.status(201).json(novo)
+})
+
+app.post('/indicators/:code/deactivate', comLatencia, (req, res) => {
+  const indicador = acharIndicador(req.params.code)
+  if (!indicador) return res.status(404).json({ mensagem: `Indicador "${req.params.code}" não encontrado.` })
+  indicador.active = false
   res.status(204).end()
 })
 
