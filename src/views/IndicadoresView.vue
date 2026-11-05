@@ -8,6 +8,7 @@ import IndicadorForm from '@/components/indicadores/IndicadorForm.vue'
 import { listarFontes } from '@/services/fontesService'
 import {
   cadastrarIndicador,
+  calcularIndicador,
   desativarIndicador,
   listarIndicadores,
 } from '@/services/indicadoresCadastrosService'
@@ -85,6 +86,25 @@ async function carregar() {
     erro.value = e.message
   } finally {
     carregando.value = false
+  }
+}
+
+// Sigla do indicador cujo cálculo está sendo disparado (só enquanto o back responde).
+const calculandoCode = ref(null)
+
+// O back só dispara a DAG no Airflow e responde 202: o cálculo em si leva minutos.
+async function calcular(indicador) {
+  calculandoCode.value = indicador.code
+  try {
+    await calcularIndicador(indicador.code)
+    aviso.value = {
+      tipo: 'sucesso',
+      texto: `O cálculo de ${indicador.code} começou no Airflow e leva alguns minutos. Depois, os resultados aparecem no card do imóvel, em Consulta.`,
+    }
+  } catch (e) {
+    aviso.value = { tipo: 'erro', texto: e.message }
+  } finally {
+    calculandoCode.value = null
   }
 }
 
@@ -202,14 +222,20 @@ onMounted(() => {
                 </span>
               </td>
               <td class="py-3 text-right">
-                <BaseButton
-                  v-if="ind.active"
-                  variante="fantasma"
-                  tamanho="sm"
-                  @click="paraDesativar = ind"
-                >
-                  Desativar
-                </BaseButton>
+                <div v-if="ind.active" class="flex justify-end gap-2">
+                  <BaseButton
+                    variante="secundario"
+                    tamanho="sm"
+                    :carregando="calculandoCode === ind.code"
+                    :disabled="!!calculandoCode"
+                    @click="calcular(ind)"
+                  >
+                    Calcular
+                  </BaseButton>
+                  <BaseButton variante="fantasma" tamanho="sm" @click="paraDesativar = ind">
+                    Desativar
+                  </BaseButton>
+                </div>
               </td>
             </tr>
           </tbody>
