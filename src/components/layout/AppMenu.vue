@@ -18,7 +18,10 @@ const grupos = [
   },
   {
     nome: 'Governança',
-    itens: [{ rota: 'rastreabilidade', rotulo: 'Rastreabilidade', icone: 'rastro' }],
+    itens: [
+      { rota: 'indicadores', rotulo: 'Indicadores', icone: 'tabela' },
+      { rota: 'rastreabilidade', rotulo: 'Rastreabilidade', icone: 'rastro' },
+    ],
   },
 ]
 </script>
