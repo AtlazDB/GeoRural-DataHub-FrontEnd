@@ -4,7 +4,13 @@ import AppIcon from '@/components/AppIcon.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import BaseModal from '@/components/BaseModal.vue'
-import { desativarIndicador, listarIndicadores } from '@/services/indicadoresCadastrosService'
+import IndicadorForm from '@/components/indicadores/IndicadorForm.vue'
+import { listarFontes } from '@/services/fontesService'
+import {
+  cadastrarIndicador,
+  desativarIndicador,
+  listarIndicadores,
+} from '@/services/indicadoresCadastrosService'
 import { formatarDataHora } from '@/utils/formato'
 
 // Nome de cada modelo de cálculo na tela (o back manda a sigla em inglês).
@@ -23,6 +29,45 @@ const aviso = ref(null)
 // Indicador esperando a confirmação no modal (null = modal fechado).
 const paraDesativar = ref(null)
 const desativando = ref(false)
+
+// Cadastro: fontes para o formulário e para mostrar o nome da fonte na lista.
+const fontes = ref([])
+const cadastroAberto = ref(false)
+const salvando = ref(false)
+const erroCadastro = ref(null) // { mensagem, campos }
+
+const nomeDaFonte = computed(() => Object.fromEntries(fontes.value.map((f) => [f.id, f.sigla])))
+
+async function carregarFontes() {
+  try {
+    fontes.value = await listarFontes()
+  } catch {
+    // Sem as fontes, a lista mostra só o número e o formulário avisa ao abrir.
+  }
+}
+
+function abrirCadastro() {
+  erroCadastro.value = null
+  cadastroAberto.value = true
+}
+
+async function salvarIndicador(corpo) {
+  salvando.value = true
+  erroCadastro.value = null
+  try {
+    const novo = await cadastrarIndicador(corpo)
+    indicadores.value.push(novo)
+    cadastroAberto.value = false
+    aviso.value = { tipo: 'sucesso', texto: `O indicador ${novo.code} foi cadastrado.` }
+  } catch (e) {
+    const resposta = e.original?.response
+    // 409 = sigla repetida: o back não manda `campos`, então a sigla é marcada aqui.
+    const campos = resposta?.status === 409 ? ['code'] : (resposta?.data?.campos ?? [])
+    erroCadastro.value = { mensagem: e.message, campos }
+  } finally {
+    salvando.value = false
+  }
+}
 
 // Ativos primeiro; dentro de cada grupo, pela sigla.
 const ordenados = computed(() =>
@@ -59,7 +104,10 @@ async function confirmarDesativacao() {
   }
 }
 
-onMounted(carregar)
+onMounted(() => {
+  carregar()
+  carregarFontes()
+})
 </script>
 
 <template>
@@ -84,6 +132,10 @@ onMounted(carregar)
       :contagem="carregando || erro ? '' : String(indicadores.length)"
       descricao="Indicadores montados a partir de uma fonte de dados, um modelo de cálculo pronto e faixas de status. O IRL e o IFC, que são fixos, continuam no card do imóvel."
     >
+      <template #acoes>
+        <BaseButton tamanho="sm" @click="abrirCadastro">+ Novo indicador</BaseButton>
+      </template>
+
       <!-- Carregando -->
       <div v-if="carregando" class="space-y-2">
         <div v-for="n in 4" :key="n" class="h-12 animate-pulse rounded-xl bg-slate-800/30" />
@@ -135,7 +187,7 @@ onMounted(carregar)
               </td>
               <td class="py-3 pr-4 text-slate-300">{{ MODELOS[ind.calculationModel] ?? ind.calculationModel }}</td>
               <td class="py-3 pr-4 font-mono text-slate-300">{{ ind.unit }}</td>
-              <td class="py-3 pr-4 text-slate-400">#{{ ind.fonteId }}</td>
+              <td class="py-3 pr-4 font-mono text-slate-400">{{ nomeDaFonte[ind.fonteId] ?? `#${ind.fonteId}` }}</td>
               <td class="py-3 pr-4 text-slate-400 tabular-nums">{{ formatarDataHora(ind.createdAt) }}</td>
               <td class="py-3 pr-4">
                 <span
@@ -164,6 +216,27 @@ onMounted(carregar)
         </table>
       </div>
     </BaseCard>
+
+    <BaseModal
+      :aberto="cadastroAberto"
+      titulo="Novo indicador"
+      descricao="Escolha a fonte, o modelo de cálculo e as faixas de status. Cadastrar não calcula: o cálculo é um passo à parte."
+      largura="max-w-2xl"
+      @fechar="cadastroAberto = false"
+    >
+      <p v-if="!fontes.length" class="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+        Não deu para carregar as fontes. Confira se o back está rodando e abra o formulário de novo.
+      </p>
+      <!-- v-if: o formulário recomeça vazio a cada abertura -->
+      <IndicadorForm
+        v-if="cadastroAberto"
+        :fontes="fontes"
+        :salvando="salvando"
+        :erro="erroCadastro"
+        @salvar="salvarIndicador"
+        @cancelar="cadastroAberto = false"
+      />
+    </BaseModal>
 
     <BaseModal
       :aberto="!!paraDesativar"
