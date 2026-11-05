@@ -3,6 +3,7 @@ import ImportacaoView from '@/views/ImportacaoView.vue'
 import ConsultaView from '@/views/ConsultaView.vue'
 import QuarentenaView from '@/views/QuarentenaView.vue'
 import RastreabilidadeView from '@/views/RastreabilidadeView.vue'
+import IndicadoresView from '@/views/IndicadoresView.vue'
 
 // meta.grupo e meta.titulo aparecem no topo (AppTopo).
 const routes = [
@@ -26,6 +27,13 @@ const routes = [
     name: 'quarentena',
     component: QuarentenaView,
     meta: { grupo: 'Dados', titulo: 'Quarentena' },
+  },
+  {
+    // Indicadores cadastrados pelo usuário (US13); o IRL/IFC ficam no card do imóvel.
+    path: '/indicadores',
+    name: 'indicadores',
+    component: IndicadoresView,
+    meta: { grupo: 'Governança', titulo: 'Indicadores' },
   },
   {
     // ?imovel=<cod_imovel>&indicador=IRL|IFC
