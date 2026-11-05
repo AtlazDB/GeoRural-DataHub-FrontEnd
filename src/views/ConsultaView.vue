@@ -5,6 +5,7 @@ import FiltroTerritorio from '@/components/consulta/FiltroTerritorio.vue'
 import MapaImoveis from '@/components/consulta/MapaImoveis.vue'
 import TabelaImoveis from '@/components/consulta/TabelaImoveis.vue'
 import CardIndicadores from '@/components/consulta/CardIndicadores.vue'
+import CardIndicadoresCadastrados from '@/components/consulta/CardIndicadoresCadastrados.vue'
 import {
   listarPaginaImoveis,
   buscarImoveisNoMapa,
@@ -391,6 +392,7 @@ onBeforeUnmount(() => {
             @calcular="calcular"
             @tentar-novamente="carregarIndicadores(selecionadoCod)"
           />
+          <CardIndicadoresCadastrados :cod-imovel="selecionadoCod" />
         </BaseCard>
       </div>
     </div>
