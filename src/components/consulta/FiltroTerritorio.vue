@@ -28,8 +28,10 @@ function limpar() {
 </script>
 
 <template>
-  <div class="flex flex-wrap items-end gap-3">
-    <div class="w-full sm:w-64">
+  <!-- Fica num painel estreito por cima do mapa: município e situação lado a
+       lado, o código numa linha só dele. -->
+  <div class="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
+    <div class="min-w-0">
       <label class="label" for="filtro-municipio">Município (PR)</label>
       <select
         id="filtro-municipio"
@@ -45,7 +47,7 @@ function limpar() {
       </select>
     </div>
 
-    <div class="w-full sm:w-44">
+    <div class="min-w-0">
       <label class="label" for="filtro-situacao">Situação no CAR</label>
       <select
         id="filtro-situacao"
@@ -58,7 +60,7 @@ function limpar() {
       </select>
     </div>
 
-    <div class="w-full flex-1 sm:min-w-[240px]">
+    <div class="min-w-0 sm:col-span-2">
       <label class="label" for="filtro-codigo">Código do imóvel</label>
       <input
         id="filtro-codigo"
@@ -75,12 +77,12 @@ function limpar() {
       v-if="codIbge || codImovel || situacao"
       variante="fantasma"
       tamanho="sm"
-      class="mb-0.5"
+      class="justify-self-start sm:col-span-2"
       @click="limpar"
     >
       Limpar filtro
     </BaseButton>
 
-    <p v-if="erro" class="w-full text-xs text-red-300">{{ erro }}</p>
+    <p v-if="erro" class="text-xs text-red-300 sm:col-span-2">{{ erro }}</p>
   </div>
 </template>

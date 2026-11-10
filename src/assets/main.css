@@ -203,6 +203,17 @@
       0 8px 24px -12px rgb(15 23 42 / 0.1);
   }
 
+  /* Vidro que flutua por cima do mapa: mais opaco, para o texto não brigar
+     com os polígonos que passam por baixo. */
+  .glass-mapa {
+    @apply rounded-2xl border border-slate-800/80 bg-slate-950/85 shadow-xl shadow-black/30 backdrop-blur-lg;
+  }
+
+  html.claro .glass-mapa {
+    background-color: rgb(255 255 255 / 0.92);
+    box-shadow: 0 8px 24px -10px rgb(15 23 42 / 0.25);
+  }
+
   html.claro .glow {
     opacity: 0.55;
   }

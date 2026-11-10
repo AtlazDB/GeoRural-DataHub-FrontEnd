@@ -2,6 +2,9 @@
 import AppMenu from '@/components/layout/AppMenu.vue'
 import AppTopo from '@/components/layout/AppTopo.vue'
 import AppFooter from '@/components/layout/AppFooter.vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
 </script>
 
 <template>
@@ -16,7 +19,11 @@ import AppFooter from '@/components/layout/AppFooter.vue'
     <div class="flex min-w-0 flex-1 flex-col">
       <AppTopo />
 
-      <main class="flex-1 overflow-y-auto px-4 py-6 md:px-7">
+      <!-- Telas de mapa (meta.telaCheia) usam o <main> inteiro, sem margem nem rodapé. -->
+      <main v-if="route.meta.telaCheia" class="relative min-h-0 flex-1 overflow-hidden">
+        <RouterView />
+      </main>
+      <main v-else class="flex-1 overflow-y-auto px-4 py-6 md:px-7">
         <div class="mx-auto max-w-[1320px]">
           <RouterView />
         </div>
