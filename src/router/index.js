@@ -20,7 +20,8 @@ const routes = [
     path: '/consulta',
     name: 'consulta',
     component: ConsultaView,
-    meta: { grupo: 'Consulta', titulo: 'Imóveis rurais · Paraná' },
+    // telaCheia: o mapa ocupa todo o espaço do <main> (sem margem nem rodapé).
+    meta: { grupo: 'Consulta', titulo: 'Imóveis rurais · Paraná', telaCheia: true },
   },
   {
     path: '/quarentena',

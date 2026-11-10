@@ -32,6 +32,12 @@ const props = defineProps({
   filtrado: { type: Boolean, default: false },
   /** FeatureCollection de GET /focos (os focos que o IFC conta), ou null */
   focos: { type: Object, default: null },
+  /**
+   * Espaço (px) coberto pelos painéis flutuantes em cada lado do mapa:
+   * { topo, direita, baixo, esquerda }. O enquadramento desconta essa folga
+   * para o imóvel/município não ficar escondido atrás de um painel.
+   */
+  folga: { type: Object, default: () => ({}) },
 })
 
 const emit = defineEmits(['area', 'selecionar'])
@@ -76,6 +82,8 @@ let fundo = null
 let referencia = null
 let mascara = null
 let contornoEstado = null
+let observador = null // ResizeObserver: o mapa acompanha o tamanho da tela
+let limitesParana = null
 
 const mensagem = computed(() => {
   if (!perto.value) return { tipo: 'info', texto: 'Aproxime o zoom para ver os imóveis' }
@@ -98,7 +106,7 @@ const coresMensagem = {
 }
 
 onMounted(() => {
-  const limitesParana = L.geoJSON(parana).getBounds()
+  limitesParana = L.geoJSON(parana).getBounds()
 
   // preferCanvas: mil polígonos num único <canvas> em vez de mil elementos SVG.
   // maxBounds + viscosidade 1: o mapa não deixa arrastar para fora do PR.
@@ -106,11 +114,22 @@ onMounted(() => {
     preferCanvas: true,
     maxBounds: limitesParana.pad(0.05),
     maxBoundsViscosity: 1,
+    zoomControl: false, // vai para baixo, à direita: em cima ficam os painéis
   }).setView(CENTRO_PARANA, ZOOM_PARANA)
 
   // Zoom mínimo = o que mostra o estado inteiro. Calculado pelo tamanho real
   // do mapa na tela: numa tela estreita ele é menor que num monitor largo.
   mapa.setMinZoom(mapa.getBoundsZoom(limitesParana))
+  L.control.zoom({ position: 'bottomright' }).addTo(mapa)
+
+  // O mapa ocupa a tela toda: se a janela (ou o menu) mudar de tamanho,
+  // o Leaflet precisa recalcular o tamanho e o zoom mínimo.
+  observador = new ResizeObserver(() => {
+    if (!mapa) return
+    mapa.invalidateSize()
+    mapa.setMinZoom(mapa.getBoundsZoom(limitesParana))
+  })
+  observador.observe(container.value)
 
   // Esri não exige chave de API (a CARTO do protótipo passou a exigir).
   const atribuicao =
@@ -140,6 +159,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  observador?.disconnect()
   mapa?.remove()
   mapa = null
 })
@@ -164,7 +184,7 @@ watch(
   () => {
     if (!mapa) return
     desenharMunicipio()
-    if (camadaMunicipio) mapa.fitBounds(camadaMunicipio.getBounds(), { padding: [24, 24] })
+    if (camadaMunicipio) mapa.fitBounds(camadaMunicipio.getBounds(), margens(24))
     else mapa.setView(CENTRO_PARANA, ZOOM_PARANA)
   },
 )
@@ -286,6 +306,15 @@ function desenharMunicipio() {
   }
 }
 
+/** Padding do fitBounds: a margem mínima mais o que os painéis cobrem. */
+function margens(minimo) {
+  const { topo = 0, direita = 0, baixo = 0, esquerda = 0 } = props.folga
+  return {
+    paddingTopLeft: [esquerda + minimo, topo + minimo],
+    paddingBottomRight: [direita + minimo, baixo + minimo],
+  }
+}
+
 /**
  * Leva o mapa até a caixa envolvente de um imóvel da tabela.
  * Atenção à ordem: a API e o GeoJSON usam [lon, lat]; o Leaflet usa [lat, lon].
@@ -296,7 +325,7 @@ function enquadrar({ minLon, minLat, maxLon, maxLat }) {
       [minLat, minLon],
       [maxLat, maxLon],
     ],
-    { padding: [32, 32], maxZoom: ZOOM_MAXIMO },
+    { ...margens(32), maxZoom: ZOOM_MAXIMO },
   )
 }
 
@@ -304,15 +333,18 @@ defineExpose({ enquadrar })
 </script>
 
 <template>
-  <div class="relative">
-    <div
-      ref="container"
-      class="isolate h-[520px] w-full overflow-hidden rounded-xl border border-slate-800"
-    />
+  <div class="relative h-full w-full">
+    <div ref="container" class="isolate h-full w-full" />
 
+    <!-- Embaixo, no centro: em cima ficam os painéis da tela -->
     <div
       v-if="mensagem"
-      class="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-3"
+      class="pointer-events-none absolute z-10 flex justify-center px-14"
+      :style="{
+        left: `${folga.esquerda ?? 0}px`,
+        right: `${folga.direita ?? 0}px`,
+        bottom: `${(folga.baixo ?? 0) + 16}px`,
+      }"
     >
       <span
         :class="[

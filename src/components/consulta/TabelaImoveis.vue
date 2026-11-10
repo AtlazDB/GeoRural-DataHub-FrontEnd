@@ -58,7 +58,9 @@ const ultimo = computed(() => Math.min(props.pagina * props.tamanho, props.total
 
   <!-- Estado 4: a tabela -->
   <div v-else :class="['transition-opacity', carregando && 'opacity-50']">
-    <div class="max-h-[440px] overflow-auto rounded-xl border border-slate-800">
+    <!-- No celular a tabela fica dentro da gaveta, que já rola: mais baixa,
+         para não ser uma rolagem grande dentro da outra. -->
+    <div class="max-h-[40dvh] overflow-auto overscroll-contain rounded-xl border border-slate-800 lg:max-h-[440px]">
       <table class="w-full text-left text-sm">
         <thead class="sticky top-0 bg-slate-900 text-[10.5px] uppercase tracking-wider text-slate-500">
           <tr>
