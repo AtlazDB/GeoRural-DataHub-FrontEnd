@@ -514,7 +514,9 @@ onBeforeUnmount(() => {
         <span class="text-xs text-slate-400">{{ painelAberto ? 'Recolher' : 'Abrir' }}</span>
       </button>
 
-      <div v-show="painelAberto" class="min-h-0 space-y-2 overflow-y-auto rounded-2xl">
+      <!-- overscroll-contain: no Android, chegar ao topo da gaveta e puxar
+           não dispara o "puxar para recarregar" da página inteira. -->
+      <div v-show="painelAberto" class="min-h-0 space-y-2 overflow-y-auto overscroll-contain rounded-2xl">
         <BaseCard class="glass-mapa">
           <FiltroTerritorio
             v-model:cod-ibge="codIbge"

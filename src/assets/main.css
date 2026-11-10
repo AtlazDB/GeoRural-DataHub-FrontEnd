@@ -214,6 +214,14 @@
     box-shadow: 0 8px 24px -10px rgb(15 23 42 / 0.25);
   }
 
+  /* Altura da tela visível. No Chrome do Android, 100vh conta também a barra
+     de endereço: o fim da tela (gaveta, zoom do mapa) ficava escondido atrás
+     dela. 100dvh acompanha a barra; 100vh fica de reserva para navegador antigo. */
+  .altura-tela {
+    height: 100vh;
+    height: 100dvh;
+  }
+
   html.claro .glow {
     opacity: 0.55;
   }
