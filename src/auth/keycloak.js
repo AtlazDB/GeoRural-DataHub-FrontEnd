@@ -77,6 +77,21 @@ export function temPerfil(...lista) {
   return perfis().some((p) => lista.includes(p))
 }
 
+/**
+ * Pode ver/usar algo que exige um desses perfis? Sem exigência (lista vazia ou ausente) = liberado.
+ * Com o login desligado (mock), tudo fica liberado.
+ */
+export function podeAcessar(perfisExigidos) {
+  if (!habilitado) return true
+  if (!perfisExigidos || perfisExigidos.length === 0) return true
+  return temPerfil(...perfisExigidos)
+}
+
+/** Manda a pessoa de volta para a tela de login (sessão expirada ou inválida). */
+export function reautenticar() {
+  if (keycloak) keycloak.login()
+}
+
 export function sair() {
   if (keycloak) keycloak.logout({ redirectUri: window.location.origin })
 }

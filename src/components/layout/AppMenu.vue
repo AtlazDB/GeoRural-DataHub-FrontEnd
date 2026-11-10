@@ -1,10 +1,13 @@
 <script setup>
-import { useRoute } from 'vue-router'
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
+import { podeAcessar } from '@/auth/keycloak'
 
 const route = useRoute()
+const router = useRouter()
 
-const grupos = [
+const todosOsGrupos = [
   {
     nome: 'Dados',
     itens: [
@@ -24,6 +27,17 @@ const grupos = [
     ],
   },
 ]
+
+// Mostra só o que o perfil pode usar (a regra vem do meta.perfis de cada rota, em router/index.js).
+// Grupo sem nenhum item permitido some junto.
+const grupos = computed(() =>
+  todosOsGrupos
+    .map((grupo) => ({
+      ...grupo,
+      itens: grupo.itens.filter((item) => podeAcessar(router.resolve({ name: item.rota }).meta.perfis)),
+    }))
+    .filter((grupo) => grupo.itens.length > 0),
+)
 </script>
 
 <template>
