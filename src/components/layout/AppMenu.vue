@@ -6,6 +6,12 @@ const route = useRoute()
 
 const grupos = [
   {
+    nome: 'Visão geral',
+    itens: [
+      { rota: 'dashboard', rotulo: 'Dashboard', icone: 'painel' },
+    ],
+  },
+  {
     nome: 'Dados',
     itens: [
       { rota: 'importacao', rotulo: 'Fontes de dados', icone: 'camadas' },
