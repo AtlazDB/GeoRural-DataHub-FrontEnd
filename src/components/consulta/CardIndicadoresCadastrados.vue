@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { usePermissoes } from '@/composables/usePermissoes'
 import {
   buscarResultado,
   calcularIndicador,
@@ -22,6 +23,8 @@ import { CORES_STATUS, formatarDecimal } from '@/utils/indicadores'
 const props = defineProps({
   codImovel: { type: String, default: null },
 })
+
+const { podeOperar } = usePermissoes()
 
 const STATUS = { CONFORME: 'Conforme', ALERTA: 'Alerta', CRITICO: 'Crítico', VALIDACAO: 'Em validação' }
 
@@ -153,7 +156,7 @@ function cores(status) {
           {{ avisos[indicador.code].texto }}
         </p>
 
-        <div class="mt-2 flex justify-end">
+        <div v-if="podeOperar" class="mt-2 flex justify-end">
           <BaseButton
             :variante="resultado ? 'fantasma' : 'secundario'"
             tamanho="sm"

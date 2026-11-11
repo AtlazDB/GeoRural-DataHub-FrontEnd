@@ -5,6 +5,7 @@ import BaseButton from '@/components/BaseButton.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import BaseModal from '@/components/BaseModal.vue'
 import IndicadorForm from '@/components/indicadores/IndicadorForm.vue'
+import { usePermissoes } from '@/composables/usePermissoes'
 import { listarFontes } from '@/services/fontesService'
 import {
   cadastrarIndicador,
@@ -19,6 +20,8 @@ const MODELOS = {
   POINT_DENSITY: 'Densidade de pontos',
   AREA_COVERAGE: 'Cobertura de área',
 }
+
+const { podeOperar } = usePermissoes()
 
 const indicadores = ref([])
 const carregando = ref(true)
@@ -153,7 +156,7 @@ onMounted(() => {
       descricao="Indicadores montados a partir de uma fonte de dados, um modelo de cálculo pronto e faixas de status. O IRL e o IFC, que são fixos, continuam no card do imóvel."
     >
       <template #acoes>
-        <BaseButton tamanho="sm" @click="abrirCadastro">+ Novo indicador</BaseButton>
+        <BaseButton v-if="podeOperar" tamanho="sm" @click="abrirCadastro">+ Novo indicador</BaseButton>
       </template>
 
       <!-- Carregando -->
@@ -222,7 +225,7 @@ onMounted(() => {
                 </span>
               </td>
               <td class="py-3 text-right">
-                <div v-if="ind.active" class="flex justify-end gap-2">
+                <div v-if="ind.active && podeOperar" class="flex justify-end gap-2">
                   <BaseButton
                     variante="secundario"
                     tamanho="sm"

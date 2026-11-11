@@ -23,6 +23,7 @@ import {
 import { processarArquivo, excluirArquivo } from '@/services/arquivosService'
 import { ehProcessavel } from '@/utils/processamento'
 import { formatarDataHora } from '@/utils/formato'
+import { usePermissoes } from '@/composables/usePermissoes'
 
 /**
  * ==================================================================
@@ -42,6 +43,7 @@ import { formatarDataHora } from '@/utils/formato'
 
 const route = useRoute()
 const router = useRouter()
+const { podeOperar } = usePermissoes()
 
 // --- Estado do mapeamento -----------------------------------------
 const novasPorFonte = ref({})
@@ -550,7 +552,7 @@ onBeforeUnmount(() => {
         </p>
         <!-- As fontes do projeto já estão cadastradas: o botão fica à vista, mas inativo.
              Para mudar como uma fonte chega (link ou upload), use "Editar" na página dela. -->
-        <span title="As fontes do projeto já estão cadastradas. Para mudar uma delas, abra a fonte e use Editar.">
+        <span v-if="podeOperar" title="As fontes do projeto já estão cadastradas. Para mudar uma delas, abra a fonte e use Editar.">
           <BaseButton tamanho="sm" disabled>
             <AppIcon nome="mais" traco="2.4" class="h-3 w-3" />
             Nova fonte
@@ -626,7 +628,7 @@ onBeforeUnmount(() => {
             </span>
             <StatusBadge :status="selecionada.status" />
             <span class="text-[12px] text-slate-500">· {{ selecionada.orgao }}</span>
-            <BaseButton class="ml-auto" variante="fantasma" tamanho="sm" @click="editarFonte(selecionada)">
+            <BaseButton v-if="podeOperar" class="ml-auto" variante="fantasma" tamanho="sm" @click="editarFonte(selecionada)">
               <AppIcon nome="lapis" class="h-3.5 w-3.5" />
               Editar
             </BaseButton>
@@ -685,7 +687,7 @@ onBeforeUnmount(() => {
             @executar="executar(selecionada)"
             @testar="testarLinkDaFonte"
           />
-          <section v-else class="glass space-y-4 p-5">
+          <section v-else-if="podeOperar" class="glass space-y-4 p-5">
             <div>
               <h2 class="text-sm font-semibold text-white">Enviar arquivo</h2>
               <p class="mt-1 max-w-2xl text-[13px] text-slate-400">
@@ -700,6 +702,13 @@ onBeforeUnmount(() => {
               :progresso="progresso"
               @enviar="enviar"
             />
+          </section>
+          <section v-else class="glass p-5">
+            <h2 class="text-sm font-semibold text-white">Recebimento por upload</h2>
+            <p class="mt-1 max-w-2xl text-[13px] text-slate-400">
+              O envio de arquivos é feito pelo operador de dados. Veja os arquivos já recebidos na aba
+              Arquivos recebidos.
+            </p>
           </section>
         </template>
 
