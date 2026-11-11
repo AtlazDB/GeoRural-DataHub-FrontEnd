@@ -5,6 +5,7 @@ import QuarentenaView from '@/views/QuarentenaView.vue'
 import RastreabilidadeView from '@/views/RastreabilidadeView.vue'
 import IndicadoresView from '@/views/IndicadoresView.vue'
 import SemAcessoView from '@/views/SemAcessoView.vue'
+import UsuariosView from '@/views/UsuariosView.vue'
 import { podeAcessar } from '@/auth/keycloak'
 
 // Perfis do Keycloak (iguais aos do back, ver SecurityConfig). Esta é a ÚNICA lista de quem acessa cada tela:
@@ -49,6 +50,13 @@ const routes = [
     name: 'rastreabilidade',
     component: RastreabilidadeView,
     meta: { grupo: 'Governança', titulo: 'Rastreabilidade', perfis: TODOS },
+  },
+  {
+    // Gestão de perfis de acesso (T28). Só o GESTOR; o back também barra (/api/v1/usuarios).
+    path: '/usuarios',
+    name: 'usuarios',
+    component: UsuariosView,
+    meta: { grupo: 'Administração', titulo: 'Usuários e perfis', perfis: ['GESTOR'] },
   },
   {
     // Quem entrou, mas não tem perfil para nenhuma tela. Sem meta.perfis: qualquer pessoa logada abre.

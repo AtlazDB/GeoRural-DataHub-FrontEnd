@@ -26,6 +26,10 @@ const todosOsGrupos = [
       { rota: 'rastreabilidade', rotulo: 'Rastreabilidade', icone: 'rastro' },
     ],
   },
+    {
+    nome: 'Administração',
+    itens: [{ rota: 'usuarios', rotulo: 'Usuários e perfis', icone: 'escudo' }],
+  },
 ]
 
 // Mostra só o que o perfil pode usar (a regra vem do meta.perfis de cada rota, em router/index.js).
