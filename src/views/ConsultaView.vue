@@ -6,6 +6,7 @@ import MapaImoveis from '@/components/consulta/MapaImoveis.vue'
 import TabelaImoveis from '@/components/consulta/TabelaImoveis.vue'
 import CardIndicadores from '@/components/consulta/CardIndicadores.vue'
 import CardIndicadoresCadastrados from '@/components/consulta/CardIndicadoresCadastrados.vue'
+import ModalOrigem from '@/components/consulta/ModalOrigem.vue'
 import {
   listarPaginaImoveis,
   buscarImoveisNoMapa,
@@ -14,6 +15,7 @@ import {
 import { listarMunicipios, buscarMunicipio } from '@/services/municipiosService'
 import { buscarFocosNoMapa } from '@/services/focosService'
 import { buscarIndicadores, calcularIndicadores } from '@/services/indicadoresService'
+import { buscarOrigem, compararVersoes } from '@/services/versoesService'
 import { formatarNumero } from '@/utils/formato'
 
 /**
@@ -435,6 +437,34 @@ onMounted(() => {
   observadorPainel.observe(areaRef.value)
 })
 
+// "De onde veio este número?": origem do imóvel e comparação com a versão anterior.
+const origem = ref({ aberto: false, indicador: 'IRL', dados: null, comparacao: null, carregando: false, comparando: false, erro: '' })
+
+async function abrirOrigem(indicador) {
+  const cod = selecionadoCod.value
+  origem.value = { aberto: true, indicador, dados: null, comparacao: null, carregando: true, comparando: false, erro: '' }
+  try {
+    const [dados, comparacao] = await Promise.all([buscarOrigem(cod), compararVersoes(cod)])
+    if (cod !== selecionadoCod.value) return
+    origem.value = { ...origem.value, dados, comparacao }
+  } catch (e) {
+    origem.value.erro = e.message
+  } finally {
+    origem.value.carregando = false
+  }
+}
+
+async function compararOutras(par) {
+  origem.value.comparando = true
+  try {
+    origem.value.comparacao = await compararVersoes(selecionadoCod.value, par)
+  } catch (e) {
+    origem.value.erro = e.message
+  } finally {
+    origem.value.comparando = false
+  }
+}
+
 onBeforeUnmount(() => {
   consultaTelaLarga.removeEventListener('change', aoMudarLargura)
   observadorPainel?.disconnect()
@@ -556,11 +586,24 @@ onBeforeUnmount(() => {
               :calculando="calculando"
               @calcular="calcular"
               @tentar-novamente="carregarIndicadores(selecionadoCod)"
+              @origem="abrirOrigem"
             />
             <CardIndicadoresCadastrados :cod-imovel="selecionadoCod" />
           </BaseCard>
         </div>
       </div>
     </aside>
+    <ModalOrigem
+      :aberto="origem.aberto"
+      :cod-imovel="selecionadoCod ?? ''"
+      :indicador="origem.indicador"
+      :origem="origem.dados"
+      :comparacao="origem.comparacao"
+      :carregando="origem.carregando"
+      :comparando="origem.comparando"
+      :erro="origem.erro"
+      @fechar="origem.aberto = false"
+      @comparar="compararOutras"
+    />
   </div>
 </template>

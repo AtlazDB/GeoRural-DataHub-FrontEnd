@@ -68,10 +68,14 @@ export function formatarValor(indicador) {
   return indicador.indicador === 'IRL' ? `${numero}%` : numero
 }
 
+export function nomeConjunto(conjunto) {
+  return CONJUNTOS[conjunto] ?? conjunto
+}
+
 /** { conjunto: 'reserva_legal', versao: 2 } -> "Reserva Legal v2" */
 export function rotuloVersao(versao) {
   if (!versao) return '—'
-  return `${CONJUNTOS[versao.conjunto] ?? versao.conjunto} v${versao.versao}`
+  return `${nomeConjunto(versao.conjunto)} v${versao.versao}`
 }
 
 /** sha256 de 64 caracteres -> "sha256:51ab…7e" */
