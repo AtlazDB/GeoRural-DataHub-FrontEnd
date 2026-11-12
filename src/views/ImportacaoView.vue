@@ -11,6 +11,7 @@ import FonteUpload from '@/components/fontes/FonteUpload.vue'
 import ArquivoList from '@/components/fontes/ArquivoList.vue'
 import RecebimentoLink from '@/components/fontes/RecebimentoLink.vue'
 import MapeamentoPainel from '@/components/mapeamento/MapeamentoPainel.vue'
+import VersoesFonte from '@/components/fontes/VersoesFonte.vue'
 import { listarColunas } from '@/services/mapeamentosService'
 import {
   listarFontes,
@@ -21,6 +22,7 @@ import {
   executarColeta,
 } from '@/services/fontesService'
 import { processarArquivo, excluirArquivo } from '@/services/arquivosService'
+import { listarVersoesDaFonte } from '@/services/versoesService'
 import { ehProcessavel } from '@/utils/processamento'
 import { formatarDataHora } from '@/utils/formato'
 import { usePermissoes } from '@/composables/usePermissoes'
@@ -76,7 +78,7 @@ const fontesVisiveis = computed(() => {
 })
 
 // --- Página da fonte: abas ----------------------------------------
-const ABAS = ['recebimento', 'arquivos', 'mapeamento']
+const ABAS = ['recebimento', 'arquivos', 'mapeamento', 'versoes']
 const aba = computed(() => (ABAS.includes(route.query.aba) ? route.query.aba : 'recebimento'))
 
 function irParaAba(nova) {
@@ -87,7 +89,31 @@ const abas = computed(() => [
   { id: 'recebimento', rotulo: 'Recebimento' },
   { id: 'arquivos', rotulo: 'Arquivos recebidos', contagem: selecionada.value?.arquivos?.length ?? 0 },
   { id: 'mapeamento', rotulo: 'Mapeamento', semRegra: novasPorFonte.value[selecionada.value?.id] ?? 0 },
+  { id: 'versoes', rotulo: 'Versões' },
 ])
+
+// --- Aba Versões ----------------------------------------------------
+const versoes = ref([])
+const carregandoVersoes = ref(false)
+const erroVersoes = ref('')
+let pedidoVersoes = 0
+
+async function carregarVersoes() {
+  const fonteId = selecionada.value?.id
+  if (!fonteId) return
+  const meu = ++pedidoVersoes
+  carregandoVersoes.value = true
+  erroVersoes.value = ''
+  try {
+    const lista = await listarVersoesDaFonte(fonteId)
+    if (meu === pedidoVersoes) versoes.value = lista
+  } catch (e) {
+    if (meu === pedidoVersoes) erroVersoes.value = e.message
+  } finally {
+    if (meu === pedidoVersoes) carregandoVersoes.value = false
+  }
+}
+
 
 // O que trava a fonte aberta: arquivo esperando o mapeamento. Coluna sem regra
 // sozinha não é alerta: muitas ficam sem mapeamento de propósito (objectid, Shape__Area)
@@ -123,6 +149,15 @@ const formRef = ref(null)
 
 // --- Estado do upload ---------------------------------------------
 const selecionada = ref(null)
+
+// Aba Versões: carrega ao abrir a aba ou trocar de fonte com ela aberta.
+watch(
+  () => [aba.value, selecionada.value?.id],
+  ([abaAtual]) => {
+    if (abaAtual === 'versoes') carregarVersoes()
+  },
+)
+
 const enviando = ref(false)
 const progresso = ref(0)
 const uploadRef = ref(null)
@@ -722,6 +757,16 @@ onBeforeUnmount(() => {
             @processar="processar"
             @excluir="excluir"
             @mapear="irParaAba('mapeamento')"
+          />
+        </section>
+
+        <!-- Aba: Versões -->
+        <section v-else-if="aba === 'versoes'" class="glass p-5">
+          <VersoesFonte
+            :versoes="versoes"
+            :carregando="carregandoVersoes"
+            :erro="erroVersoes"
+            @tentar-novamente="carregarVersoes"
           />
         </section>
 
