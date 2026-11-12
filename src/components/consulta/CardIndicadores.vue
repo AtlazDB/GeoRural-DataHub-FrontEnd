@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { usePermissoes } from '@/composables/usePermissoes'
 import { formatarArea, formatarDataHora } from '@/utils/formato'
 import {
   NOMES,
@@ -29,6 +30,8 @@ const props = defineProps({
 })
 
 defineEmits(['calcular', 'tentar-novamente'])
+
+const { podeOperar } = usePermissoes()
 
 const irl = computed(() => props.indicadores?.find((i) => i.indicador === 'IRL') ?? null)
 const ifc = computed(() => props.indicadores?.find((i) => i.indicador === 'IFC') ?? null)
@@ -88,9 +91,10 @@ function rastreio(indicador) {
       O cálculo usa a Reserva Legal e os focos de calor já carregados. Depois de carregar dados
       novos, calcule de novo.
     </p>
-    <BaseButton class="mt-4" tamanho="sm" :carregando="calculando" @click="$emit('calcular')">
+    <BaseButton v-if="podeOperar" class="mt-4" tamanho="sm" :carregando="calculando" @click="$emit('calcular')">
       Calcular indicadores
     </BaseButton>
+    <p v-else class="mt-4 text-xs text-slate-500">O cálculo é feito pela equipe de dados.</p>
   </div>
 
   <!-- O código do imóvel aparece no cabeçalho do card (ConsultaView) -->
@@ -185,7 +189,7 @@ function rastreio(indicador) {
       <p v-else class="mt-2 text-[12px] text-slate-500">Sem focos de calor carregados.</p>
     </section>
 
-    <div class="flex justify-end">
+    <div v-if="podeOperar" class="flex justify-end">
       <BaseButton variante="fantasma" tamanho="sm" :carregando="calculando" @click="$emit('calcular')">
         <AppIcon v-if="!calculando" nome="atualizar" traco="2.4" class="h-3 w-3" />
         Recalcular

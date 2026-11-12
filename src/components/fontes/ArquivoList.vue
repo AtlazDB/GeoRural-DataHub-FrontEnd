@@ -3,6 +3,7 @@ import BaseButton from '@/components/BaseButton.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import { formatarTamanho, formatarDataHora } from '@/utils/formato'
 import { ehProcessavel } from '@/utils/processamento'
+import { usePermissoes } from '@/composables/usePermissoes'
 
 /**
  * Arquivos recebidos de uma fonte, com o status do processamento.
@@ -27,6 +28,8 @@ const props = defineProps({
 })
 
 defineEmits(['processar', 'excluir', 'mapear'])
+
+const { podeOperar } = usePermissoes()
 
 const etiquetas = {
   AGUARDANDO_MAPEAMENTO: {
@@ -98,7 +101,7 @@ function podeExcluir(arquivo) {
         </span>
 
         <BaseButton
-          v-if="statusDe(arquivo) === 'AGUARDANDO_MAPEAMENTO'"
+          v-if="podeOperar && statusDe(arquivo) === 'AGUARDANDO_MAPEAMENTO'"
           variante="secundario"
           tamanho="sm"
           class="shrink-0"
@@ -108,7 +111,7 @@ function podeExcluir(arquivo) {
         </BaseButton>
 
         <BaseButton
-          v-if="podeProcessar(arquivo)"
+          v-if="podeOperar && podeProcessar(arquivo)"
           variante="secundario"
           tamanho="sm"
           class="shrink-0"
@@ -119,7 +122,7 @@ function podeExcluir(arquivo) {
         </BaseButton>
 
         <BaseButton
-          v-if="podeExcluir(arquivo)"
+          v-if="podeOperar && podeExcluir(arquivo)"
           variante="fantasma"
           tamanho="sm"
           class="shrink-0 text-rose-300 hover:text-rose-200"
