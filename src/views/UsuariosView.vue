@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BaseButton from '@/components/BaseButton.vue'
 import UsuarioPerfisGaveta from '@/components/usuarios/UsuarioPerfisGaveta.vue'
+import NovoUsuarioGaveta from '@/components/usuarios/NovoUsuarioGaveta.vue'
+import { restritoPorRegiao } from '@/components/usuarios/perfis'
 import { listarUsuarios } from '@/services/usuariosService'
 
 /**
@@ -23,6 +25,7 @@ const busca = ref('')
 const pagina = ref(0)
 
 const editando = ref(null) // usuário aberto na gaveta
+const criando = ref(false)
 const aviso = ref('')
 let esperaAviso = null
 
@@ -69,9 +72,25 @@ function irPara(novaPagina) {
 function aoSalvar(atualizado) {
   usuarios.value = usuarios.value.map((u) => (u.id === atualizado.id ? atualizado : u))
   editando.value = null
-  aviso.value = `Perfis de ${atualizado.nome} atualizados.`
+  avisar(`Acesso de ${atualizado.nome} atualizado.`)
+}
+
+function aoCriar(criado) {
+  criando.value = false
+  usuarios.value = [criado, ...usuarios.value.filter((u) => u.id !== criado.id)]
+  avisar(`Usuário ${criado.username} criado. Passe a senha provisória para a pessoa.`)
+}
+
+function avisar(texto) {
+  aviso.value = texto
   clearTimeout(esperaAviso)
   esperaAviso = setTimeout(() => (aviso.value = ''), 5000)
+}
+
+function rotuloRegiao(u) {
+  if (!restritoPorRegiao(u.perfis)) return ''
+  if (!u.totalMunicipios) return 'Todas as cidades'
+  return u.totalMunicipios === 1 ? '1 cidade' : `${u.totalMunicipios} cidades`
 }
 
 // Página cheia = provavelmente há mais; o back não informa o total.
@@ -96,6 +115,7 @@ onBeforeUnmount(() => {
                text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
       />
       <BaseButton variante="fantasma" :carregando="carregando" @click="carregar">Atualizar</BaseButton>
+      <BaseButton class="ml-auto" @click="criando = true">Novo usuário</BaseButton>
     </div>
 
     <p
@@ -153,6 +173,12 @@ onBeforeUnmount(() => {
             {{ ROTULOS_PERFIL[p] ?? p }}
           </span>
           <span
+            v-if="rotuloRegiao(u)"
+            class="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-200"
+          >
+            {{ rotuloRegiao(u) }}
+          </span>
+          <span
             v-if="!u.perfis.length"
             class="rounded-full border border-slate-700 px-2 py-0.5 text-[11px] text-slate-500"
           >
@@ -161,7 +187,7 @@ onBeforeUnmount(() => {
         </div>
 
         <BaseButton variante="fantasma" tamanho="sm" class="shrink-0" @click="editando = u">
-          Editar perfis
+          Editar acesso
         </BaseButton>
       </li>
     </ul>
@@ -177,5 +203,6 @@ onBeforeUnmount(() => {
     </div>
 
     <UsuarioPerfisGaveta :usuario="editando" @fechar="editando = null" @salvo="aoSalvar" />
+    <NovoUsuarioGaveta :aberto="criando" @fechar="criando = false" @criado="aoCriar" />
   </section>
 </template>
