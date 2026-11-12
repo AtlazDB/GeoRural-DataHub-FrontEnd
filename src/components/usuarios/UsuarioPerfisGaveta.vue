@@ -2,11 +2,18 @@
 import { computed, ref, watch } from 'vue'
 import BaseGaveta from '@/components/BaseGaveta.vue'
 import BaseButton from '@/components/BaseButton.vue'
-import { salvarPerfis } from '@/services/usuariosService'
+import SeletorCidades from '@/components/usuarios/SeletorCidades.vue'
+import { PERFIS, restritoPorRegiao } from '@/components/usuarios/perfis'
+import {
+  buscarMunicipiosDoUsuario,
+  buscarUsuario,
+  salvarMunicipiosDoUsuario,
+  salvarPerfis,
+} from '@/services/usuariosService'
 import { usuarioLogado } from '@/auth/keycloak'
 
 /**
- * Gaveta de edição dos perfis de um usuário (T28.4).
+ * Gaveta de edição dos perfis e das cidades de um usuário (T28.4 e US14).
  *
  * Abre quando recebe um `usuario`; fecha quando ele volta a ser null.
  * Emite 'fechar' e 'salvo' (com o usuário já atualizado, como o back devolve).
@@ -17,26 +24,37 @@ const props = defineProps({
 })
 const emit = defineEmits(['fechar', 'salvo'])
 
-// Mesma lista do back (UsuarioServiceImpl.PERFIS_DO_SISTEMA). Se a matriz de permissões mudar,
-// atualize também as descrições.
-const PERFIS = [
-  { codigo: 'OPERADOR_DADOS', rotulo: 'Operador de dados', descricao: 'Importa e processa dados: fontes, arquivos, mapeamentos, quarentena e indicadores.' },
-  { codigo: 'ANALISTA', rotulo: 'Analista', descricao: 'Consulta o mapa, os imóveis e os indicadores, sem alterar dados.' },
-  { codigo: 'AUDITOR', rotulo: 'Auditor', descricao: 'Acompanha fontes, quarentena e rastreabilidade, sem alterar dados.' },
-  { codigo: 'GESTOR', rotulo: 'Gestor', descricao: 'Acesso total, inclusive a gestão de usuários.' },
-]
-
 const marcados = ref([])
+const todas = ref(true)
+const cidades = ref([])
+const cidadesAntes = ref({ todas: true, cidades: [] })
+const carregandoCidades = ref(false)
 const salvando = ref(false)
 const erro = ref('')
 
-// Cada vez que outro usuário é aberto, os checkboxes voltam ao estado dele.
+// Cada vez que outro usuário é aberto, o formulário volta ao estado dele.
 watch(
   () => props.usuario,
-  (u) => {
+  async (u) => {
     marcados.value = u ? [...u.perfis] : []
     erro.value = ''
     salvando.value = false
+    todas.value = true
+    cidades.value = []
+    cidadesAntes.value = { todas: true, cidades: [] }
+    if (!u) return
+    carregandoCidades.value = true
+    try {
+      const acesso = await buscarMunicipiosDoUsuario(u.id)
+      if (props.usuario?.id !== u.id) return
+      todas.value = acesso.todas
+      cidades.value = acesso.municipios.map((m) => m.codIbge)
+      cidadesAntes.value = { todas: acesso.todas, cidades: [...cidades.value] }
+    } catch (e) {
+      erro.value = `Não deu para carregar as cidades: ${e.message}`
+    } finally {
+      carregandoCidades.value = false
+    }
   },
   { immediate: true },
 )
@@ -46,18 +64,31 @@ const eVoce = computed(
   () => !!props.usuario && usuarioLogado()?.usuario === props.usuario.username,
 )
 
-const mudou = computed(() => {
+const mostraCidades = computed(() => marcados.value.includes('ANALISTA'))
+
+const mudouPerfis = computed(() => {
   const antes = [...(props.usuario?.perfis ?? [])].sort().join()
   const agora = [...marcados.value].sort().join()
   return antes !== agora
 })
 
+const mudouCidades = computed(
+  () =>
+    todas.value !== cidadesAntes.value.todas ||
+    (!todas.value && [...cidades.value].sort().join() !== [...cidadesAntes.value.cidades].sort().join()),
+)
+
+const semCidade = computed(() => mostraCidades.value && !todas.value && !cidades.value.length)
+
 async function salvar() {
   salvando.value = true
   erro.value = ''
   try {
-    const atualizado = await salvarPerfis(props.usuario.id, marcados.value)
-    emit('salvo', atualizado)
+    if (mudouPerfis.value) await salvarPerfis(props.usuario.id, marcados.value)
+    if (mudouCidades.value) {
+      await salvarMunicipiosDoUsuario(props.usuario.id, { todas: todas.value, municipios: cidades.value })
+    }
+    emit('salvo', await buscarUsuario(props.usuario.id))
   } catch (e) {
     erro.value = e.message
   } finally {
@@ -76,7 +107,7 @@ async function salvar() {
     <div v-if="usuario" class="mx-auto max-w-xl space-y-4">
       <p class="text-sm text-slate-400">
         Marque o que esta pessoa pode usar no sistema.
-        A mudança vale no próximo login dela (ou em até 15 minutos, se ela estiver conectada).
+        A mudança de perfil vale no próximo login dela (ou em até 15 minutos, se ela estiver conectada).
       </p>
 
       <fieldset class="space-y-2" :disabled="salvando">
@@ -119,6 +150,19 @@ async function salvar() {
         Sem nenhum perfil, a pessoa consegue entrar, mas não acessa nenhuma tela.
       </p>
 
+      <section v-if="mostraCidades" class="rounded-xl border border-slate-800 p-4">
+        <p v-if="carregandoCidades" class="text-sm text-slate-400">Carregando as cidades…</p>
+        <SeletorCidades
+          v-else
+          v-model:todas="todas"
+          v-model:selecionadas="cidades"
+          :desabilitado="salvando"
+        />
+        <p v-if="!restritoPorRegiao(marcados)" class="mt-3 text-xs text-slate-500">
+          Com outro perfil além de Analista, a pessoa vê todas as cidades; esta lista só vale se ela ficar só como Analista.
+        </p>
+      </section>
+
       <p
         v-if="erro"
         role="alert"
@@ -130,7 +174,9 @@ async function salvar() {
 
     <template #rodape>
       <BaseButton variante="fantasma" :disabled="salvando" @click="emit('fechar')">Cancelar</BaseButton>
-      <BaseButton :carregando="salvando" :disabled="!mudou" @click="salvar">Salvar perfis</BaseButton>
+      <BaseButton :carregando="salvando" :disabled="(!mudouPerfis && !mudouCidades) || semCidade" @click="salvar">
+        Salvar
+      </BaseButton>
     </template>
   </BaseGaveta>
 </template>

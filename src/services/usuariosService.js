@@ -24,3 +24,20 @@ export async function salvarPerfis(id, perfis) {
   const { data } = await http.put(`/usuarios/${id}/perfis`, { perfis })
   return data
 }
+/** Cria o usuário no Keycloak com perfis e cidades. A senha é provisória (troca no primeiro login). */
+export async function criarUsuario(usuario) {
+  const { data } = await http.post('/usuarios', usuario)
+  return data
+}
+
+/** { todas, municipios: [{ codIbge, nome }] } — todas = true quando não há restrição. */
+export async function buscarMunicipiosDoUsuario(id) {
+  const { data } = await http.get(`/usuarios/${id}/municipios`)
+  return data
+}
+
+/** Troca as cidades liberadas. todas = true volta para o Paraná inteiro. */
+export async function salvarMunicipiosDoUsuario(id, { todas, municipios }) {
+  const { data } = await http.put(`/usuarios/${id}/municipios`, { todas, municipios })
+  return data
+}
