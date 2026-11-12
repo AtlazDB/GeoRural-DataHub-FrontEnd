@@ -3,10 +3,11 @@ import Keycloak from 'keycloak-js'
 /**
  * Login do front com o Keycloak (Authorization Code + PKCE, sem senha passando pelo front).
  *
- * Variáveis (.env.development / .env.example):
- *   VITE_KEYCLOAK_URL        ex.: http://localhost:8081
- *   VITE_KEYCLOAK_REALM      ex.: georural
- *   VITE_KEYCLOAK_CLIENT_ID  ex.: georural-frontend
+ * Variáveis (.env.development / .env.example), todas opcionais: sem elas, vale o Keycloak local
+ * do docker-compose do back.
+ *   VITE_KEYCLOAK_URL        padrão: http://localhost:8081
+ *   VITE_KEYCLOAK_REALM      padrão: georural
+ *   VITE_KEYCLOAK_CLIENT_ID  padrão: georural-frontend
  *   VITE_AUTH_HABILITADO     "false" desliga o login (útil com o mock do back, que não valida token)
  *
  * O token fica só em memória: recarregar a página refaz o login silenciosamente (sessão do Keycloak).
@@ -24,9 +25,9 @@ export async function iniciarAuth() {
   if (!habilitado) return false
 
   keycloak = new Keycloak({
-    url: import.meta.env.VITE_KEYCLOAK_URL,
-    realm: import.meta.env.VITE_KEYCLOAK_REALM,
-    clientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID,
+    url: import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8081',
+    realm: import.meta.env.VITE_KEYCLOAK_REALM || 'georural',
+    clientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'georural-frontend',
   })
 
   await keycloak.init({
