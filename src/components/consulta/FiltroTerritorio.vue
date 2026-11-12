@@ -14,6 +14,8 @@ defineProps({
   codImovel: { type: String, default: '' },
   situacao: { type: String, default: '' },
   carregando: { type: Boolean, default: false },
+  /** analista que só vê as cidades liberadas pelo gestor */
+  restrito: { type: Boolean, default: false },
   /** mensagem pronta, montada pela view */
   erro: { type: String, default: '' },
 })
@@ -40,7 +42,9 @@ function limpar() {
         :disabled="carregando"
         @change="emit('update:codIbge', $event.target.value)"
       >
-        <option value="">Todos os municípios ({{ municipios.length }})</option>
+        <option value="">
+          {{ restrito ? 'Todas as suas cidades' : 'Todos os municípios' }} ({{ municipios.length }})
+        </option>
         <option v-for="municipio in municipios" :key="municipio.codIbge" :value="municipio.codIbge">
           {{ municipio.nome }}
         </option>
@@ -83,6 +87,9 @@ function limpar() {
       Limpar filtro
     </BaseButton>
 
+    <p v-if="restrito" class="text-xs text-slate-500 sm:col-span-2">
+      Você consulta só as cidades liberadas pelo gestor.
+    </p>
     <p v-if="erro" class="text-xs text-red-300 sm:col-span-2">{{ erro }}</p>
   </div>
 </template>

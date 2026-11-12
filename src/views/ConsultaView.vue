@@ -12,6 +12,7 @@ import {
   buscarImovel,
 } from '@/services/imoveisService'
 import { listarMunicipios, buscarMunicipio } from '@/services/municipiosService'
+import { buscarMeuAcesso } from '@/services/acessoService'
 import { buscarFocosNoMapa } from '@/services/focosService'
 import { buscarIndicadores, calcularIndicadores } from '@/services/indicadoresService'
 import { formatarNumero } from '@/utils/formato'
@@ -31,6 +32,7 @@ const TAMANHO = 50
 const municipios = ref([])
 const carregandoMunicipios = ref(false)
 const erroMunicipios = ref('')
+const restrito = ref(false) // analista com cidades definidas pelo gestor (US14)
 const erroContorno = ref('')
 const codIbge = ref('')
 const codImovel = ref('')
@@ -191,7 +193,14 @@ async function carregarMunicipios() {
   carregandoMunicipios.value = true
   erroMunicipios.value = ''
   try {
-    municipios.value = await listarMunicipios(UF)
+    // A lista já vem só com as cidades liberadas; o acesso diz se há restrição.
+    const [lista, acesso] = await Promise.all([
+      listarMunicipios(UF),
+      buscarMeuAcesso().catch(() => ({ todas: true })),
+    ])
+    municipios.value = lista
+    restrito.value = !acesso.todas
+    if (restrito.value && lista.length === 1 && !codIbge.value) codIbge.value = lista[0].codIbge
   } catch (e) {
     erroMunicipios.value = `Não deu para carregar a lista de municípios: ${e.message}`
   } finally {
@@ -523,6 +532,7 @@ onBeforeUnmount(() => {
             v-model:cod-imovel="codImovel"
             v-model:situacao="situacao"
             :municipios="municipios"
+            :restrito="restrito"
             :carregando="carregandoMunicipios"
             :erro="erroMunicipios || erroContorno"
           />
