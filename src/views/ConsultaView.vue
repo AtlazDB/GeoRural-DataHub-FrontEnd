@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import BaseCard from '@/components/BaseCard.vue'
 import FiltroTerritorio from '@/components/consulta/FiltroTerritorio.vue'
 import MapaImoveis from '@/components/consulta/MapaImoveis.vue'
 import TabelaImoveis from '@/components/consulta/TabelaImoveis.vue'
 import CardIndicadores from '@/components/consulta/CardIndicadores.vue'
+import CardIndicadoresCadastrados from '@/components/consulta/CardIndicadoresCadastrados.vue'
+import ModalOrigem from '@/components/consulta/ModalOrigem.vue'
 import {
   listarPaginaImoveis,
   buscarImoveisNoMapa,
@@ -13,6 +15,7 @@ import {
 import { listarMunicipios, buscarMunicipio } from '@/services/municipiosService'
 import { buscarFocosNoMapa } from '@/services/focosService'
 import { buscarIndicadores, calcularIndicadores } from '@/services/indicadoresService'
+import { buscarOrigem, compararVersoes } from '@/services/versoesService'
 import { formatarNumero } from '@/utils/formato'
 
 /**
@@ -70,6 +73,105 @@ let selecaoAtual = 0
 let pedidoMapa = null // AbortController do pedido do mapa em andamento
 let ultimaCaixa = null // última área visível avisada pelo mapa
 let esperaBusca = null // setTimeout da busca por código
+
+// --- Painel flutuante (filtro, tabela e indicadores por cima do mapa) ---
+// Tela larga (lg+): coluna à esquerda. Celular: gaveta que sobe de baixo,
+// começa fechada para o mapa aparecer inteiro.
+const consultaTelaLarga = window.matchMedia('(min-width: 1024px)')
+const telaLarga = ref(consultaTelaLarga.matches)
+const painelAberto = ref(telaLarga.value)
+const painelRef = ref(null)
+const indicadoresRef = ref(null)
+const areaRef = ref(null) // a área do mapa: o painel não sai dela
+const tamanhoPainel = ref({ largura: 0, altura: 0 })
+const tamanhoArea = ref({ largura: 0, altura: 0 })
+let observadorPainel = null
+
+function aoMudarLargura(e) {
+  telaLarga.value = e.matches
+}
+
+// --- Arrastar o painel (só na tela larga) ----------------------------
+// O usuário arrasta pela barra "Filtro e imóveis". Um clique sem mover
+// continua abrindo/recolhendo; se moveu mais que LIMIAR px, foi arrasto.
+const MARGEM = 16
+const LIMIAR = 4
+const posicao = ref({ x: MARGEM, y: MARGEM })
+let arrasto = null // { inicioX, inicioY, origemX, origemY, moveu }
+let ignorarClique = false
+
+/** Mantém o painel dentro da área do mapa (a barra sempre visível). */
+function limitar({ x, y }) {
+  const { largura: lp } = tamanhoPainel.value
+  const { largura: la, altura: aa } = tamanhoArea.value
+  const BARRA = 48 // altura da barra de arrastar, que nunca pode sumir
+  return {
+    x: Math.min(Math.max(x, 8), Math.max(8, la - lp - 8)),
+    y: Math.min(Math.max(y, 8), Math.max(8, aa - BARRA - 8)),
+  }
+}
+
+function iniciarArrasto(e) {
+  if (!telaLarga.value || e.button !== 0) return
+  arrasto = {
+    inicioX: e.clientX,
+    inicioY: e.clientY,
+    origemX: posicao.value.x,
+    origemY: posicao.value.y,
+    moveu: false,
+  }
+  e.currentTarget.setPointerCapture(e.pointerId)
+}
+
+function arrastar(e) {
+  if (!arrasto) return
+  const dx = e.clientX - arrasto.inicioX
+  const dy = e.clientY - arrasto.inicioY
+  if (!arrasto.moveu && Math.hypot(dx, dy) < LIMIAR) return
+  arrasto.moveu = true
+  posicao.value = limitar({ x: arrasto.origemX + dx, y: arrasto.origemY + dy })
+}
+
+function soltarArrasto() {
+  if (!arrasto) return
+  ignorarClique = arrasto.moveu
+  arrasto = null
+}
+
+function alternarPainel() {
+  if (ignorarClique) {
+    ignorarClique = false
+    return
+  }
+  painelAberto.value = !painelAberto.value
+}
+
+/** Na tela larga o painel fica onde o usuário deixou; no celular, a gaveta. */
+const estiloPainel = computed(() => {
+  if (!telaLarga.value) return {}
+  const { x, y } = posicao.value
+  return { left: `${x}px`, top: `${y}px`, maxHeight: `calc(100% - ${y + MARGEM}px)` }
+})
+
+/**
+ * Quanto do mapa o painel cobre: o enquadramento do mapa desconta isso.
+ * Na tela larga depende de onde ele está: metade esquerda → folga à
+ * esquerda; metade direita → folga à direita.
+ */
+const folga = computed(() => {
+  const { largura, altura } = tamanhoPainel.value
+  if (!largura) return {}
+  if (!telaLarga.value) return { baixo: altura + 8 }
+  const { x } = posicao.value
+  const larguraArea = tamanhoArea.value.largura
+  if (x + largura / 2 <= larguraArea / 2) return { esquerda: x + largura + 8 }
+  return { direita: larguraArea - x + 8 }
+})
+
+// Se a janela encolher, o painel volta para dentro da área.
+watch([tamanhoArea, tamanhoPainel], () => {
+  if (telaLarga.value) posicao.value = limitar(posicao.value)
+})
 
 const nomeMunicipio = computed(
   () => municipios.value.find((m) => m.codIbge === codIbge.value)?.nome ?? '',
@@ -270,6 +372,7 @@ function alternarSelecao(codigo) {
 
   selecionadoCod.value = codigo
   carregarIndicadores(codigo)
+  mostrarIndicadores()
   buscarImovel(codigo)
     .then((imovel) => {
       if (pedido === selecaoAtual) destaque.value = imovel
@@ -278,6 +381,13 @@ function alternarSelecao(codigo) {
       if (pedido === selecaoAtual) erroMapa.value = e.message
     })
   return true
+}
+
+/** Abre o painel (se estiver fechado) e rola até o card de indicadores. */
+async function mostrarIndicadores() {
+  painelAberto.value = true
+  await nextTick()
+  indicadoresRef.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
 // Da tabela: o item traz a caixa envolvente, então o mapa vai até o imóvel.
@@ -312,9 +422,52 @@ watch(codIbge, (cod) => {
 onMounted(() => {
   carregarMunicipios()
   carregarPagina()
+
+  consultaTelaLarga.addEventListener('change', aoMudarLargura)
+  // Um observador para os dois: o painel e a área do mapa.
+  observadorPainel = new ResizeObserver((entradas) => {
+    for (const { target } of entradas) {
+      const { width, height } = target.getBoundingClientRect()
+      const tamanho = { largura: width, altura: height }
+      if (target === painelRef.value) tamanhoPainel.value = tamanho
+      else tamanhoArea.value = tamanho
+    }
+  })
+  observadorPainel.observe(painelRef.value)
+  observadorPainel.observe(areaRef.value)
 })
 
+// "De onde veio este número?": origem do imóvel e comparação com a versão anterior.
+const origem = ref({ aberto: false, indicador: 'IRL', dados: null, comparacao: null, carregando: false, comparando: false, erro: '' })
+
+async function abrirOrigem(indicador) {
+  const cod = selecionadoCod.value
+  origem.value = { aberto: true, indicador, dados: null, comparacao: null, carregando: true, comparando: false, erro: '' }
+  try {
+    const [dados, comparacao] = await Promise.all([buscarOrigem(cod), compararVersoes(cod)])
+    if (cod !== selecionadoCod.value) return
+    origem.value = { ...origem.value, dados, comparacao }
+  } catch (e) {
+    origem.value.erro = e.message
+  } finally {
+    origem.value.carregando = false
+  }
+}
+
+async function compararOutras(par) {
+  origem.value.comparando = true
+  try {
+    origem.value.comparacao = await compararVersoes(selecionadoCod.value, par)
+  } catch (e) {
+    origem.value.erro = e.message
+  } finally {
+    origem.value.comparando = false
+  }
+}
+
 onBeforeUnmount(() => {
+  consultaTelaLarga.removeEventListener('change', aoMudarLargura)
+  observadorPainel?.disconnect()
   pedidoMapa?.abort()
   pedidoFocos?.abort()
   clearTimeout(esperaBusca)
@@ -322,48 +475,90 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <BaseCard>
-      <FiltroTerritorio
-        v-model:cod-ibge="codIbge"
-        v-model:cod-imovel="codImovel"
-        v-model:situacao="situacao"
-        :municipios="municipios"
-        :carregando="carregandoMunicipios"
-        :erro="erroMunicipios || erroContorno"
-      />
-    </BaseCard>
+  <!-- O mapa ocupa a tela inteira; o resto flutua por cima, como no Google Maps. -->
+  <div ref="areaRef" class="absolute inset-0">
+    <MapaImoveis
+      ref="mapaRef"
+      class="absolute inset-0"
+      :camada="camada"
+      :carregando="carregandoMapa"
+      :erro="erroMapa"
+      :municipio="municipio"
+      :destaque="destaque"
+      :filtrado="!!nomeFiltro || !!situacao"
+      :focos="focos"
+      :folga="folga"
+      @area="aoMoverMapa"
+      @selecionar="selecionarDoMapa"
+    />
 
-    <div class="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
-      <BaseCard class="lg:col-span-7" titulo="Mapa">
-        <template #acoes>
-          <div class="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 pt-0.5 text-[11px] text-slate-400">
-            <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 rounded-sm border border-cyan-400 bg-cyan-400/30" />
-              Imóvel rural
-            </span>
-            <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 rounded-full bg-orange-500" />
-              {{ legendaFocos }}
-            </span>
-          </div>
-        </template>
-        <MapaImoveis
-          ref="mapaRef"
-          :camada="camada"
-          :carregando="carregandoMapa"
-          :erro="erroMapa"
-          :municipio="municipio"
-          :destaque="destaque"
-          :filtrado="!!nomeFiltro || !!situacao"
-          :focos="focos"
-          @area="aoMoverMapa"
-          @selecionar="selecionarDoMapa"
-        />
-      </BaseCard>
+    <!-- Legenda: canto superior direito -->
+    <div
+      class="glass-mapa pointer-events-none absolute right-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] flex-col
+             gap-1 px-3 py-2 text-[11px] text-slate-400 sm:flex-row sm:gap-x-4"
+    >
+      <span class="flex items-center gap-1.5">
+        <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-cyan-400 bg-cyan-400/30" />
+        Imóvel rural
+      </span>
+      <span class="flex items-center gap-1.5">
+        <span class="h-2.5 w-2.5 shrink-0 rounded-full bg-orange-500" />
+        {{ legendaFocos }}
+      </span>
+    </div>
 
-      <div class="space-y-5 lg:col-span-5">
-        <BaseCard titulo="Imóveis" :contagem="total ? formatarNumero(total) : ''">
+    <!-- Painel: arrastável pelo mapa (lg+) ou gaveta embaixo (celular).
+         Na tela larga, left/top vêm de estiloPainel. -->
+    <aside
+      ref="painelRef"
+      :class="[
+        'absolute z-20 flex flex-col gap-2',
+        'lg:bottom-auto lg:right-auto lg:w-[460px]',
+        painelAberto ? 'inset-x-2 bottom-2 max-h-[65%]' : 'bottom-2 left-2',
+      ]"
+      :style="estiloPainel"
+      aria-label="Filtro e lista de imóveis"
+    >
+      <button
+        type="button"
+        class="glass-mapa flex shrink-0 select-none items-center justify-between gap-3 px-4 py-2.5 text-left
+               text-sm font-medium text-slate-200 transition hover:text-white lg:cursor-move lg:touch-none"
+        :aria-expanded="painelAberto"
+        title="Arraste para mover o painel; clique para abrir ou recolher"
+        @pointerdown="iniciarArrasto"
+        @pointermove="arrastar"
+        @pointerup="soltarArrasto"
+        @pointercancel="soltarArrasto"
+        @click="alternarPainel"
+      >
+        <span class="flex items-center gap-2">
+          <!-- Pegador: seis pontinhos, só onde dá para arrastar -->
+          <svg class="hidden h-4 w-4 text-slate-500 lg:block" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <circle cx="6" cy="4" r="1.2" /><circle cx="10" cy="4" r="1.2" />
+            <circle cx="6" cy="8" r="1.2" /><circle cx="10" cy="8" r="1.2" />
+            <circle cx="6" cy="12" r="1.2" /><circle cx="10" cy="12" r="1.2" />
+          </svg>
+          Filtro e imóveis
+          <span v-if="total" class="font-normal text-slate-500">{{ formatarNumero(total) }}</span>
+        </span>
+        <span class="text-xs text-slate-400">{{ painelAberto ? 'Recolher' : 'Abrir' }}</span>
+      </button>
+
+      <!-- overscroll-contain: no Android, chegar ao topo da gaveta e puxar
+           não dispara o "puxar para recarregar" da página inteira. -->
+      <div v-show="painelAberto" class="min-h-0 space-y-2 overflow-y-auto overscroll-contain rounded-2xl">
+        <BaseCard class="glass-mapa">
+          <FiltroTerritorio
+            v-model:cod-ibge="codIbge"
+            v-model:cod-imovel="codImovel"
+            v-model:situacao="situacao"
+            :municipios="municipios"
+            :carregando="carregandoMunicipios"
+            :erro="erroMunicipios || erroContorno"
+          />
+        </BaseCard>
+
+        <BaseCard class="glass-mapa" titulo="Imóveis" :contagem="total ? formatarNumero(total) : ''">
           <TabelaImoveis
             :itens="itens"
             :total="total"
@@ -378,21 +573,37 @@ onBeforeUnmount(() => {
           />
         </BaseCard>
 
-        <BaseCard titulo="Indicadores do imóvel">
-          <template v-if="selecionadoCod" #subtitulo>
-            <p class="truncate font-mono text-[11.5px] text-cyan-400">{{ selecionadoCod }}</p>
-          </template>
-          <CardIndicadores
-            :cod-imovel="selecionadoCod"
-            :indicadores="indicadores"
-            :carregando="carregandoIndicadores"
-            :erro="erroIndicadores"
-            :calculando="calculando"
-            @calcular="calcular"
-            @tentar-novamente="carregarIndicadores(selecionadoCod)"
-          />
-        </BaseCard>
+        <div ref="indicadoresRef">
+          <BaseCard class="glass-mapa" titulo="Indicadores do imóvel">
+            <template v-if="selecionadoCod" #subtitulo>
+              <p class="truncate font-mono text-[11.5px] text-cyan-400">{{ selecionadoCod }}</p>
+            </template>
+            <CardIndicadores
+              :cod-imovel="selecionadoCod"
+              :indicadores="indicadores"
+              :carregando="carregandoIndicadores"
+              :erro="erroIndicadores"
+              :calculando="calculando"
+              @calcular="calcular"
+              @tentar-novamente="carregarIndicadores(selecionadoCod)"
+              @origem="abrirOrigem"
+            />
+            <CardIndicadoresCadastrados :cod-imovel="selecionadoCod" />
+          </BaseCard>
+        </div>
       </div>
-    </div>
+    </aside>
+    <ModalOrigem
+      :aberto="origem.aberto"
+      :cod-imovel="selecionadoCod ?? ''"
+      :indicador="origem.indicador"
+      :origem="origem.dados"
+      :comparacao="origem.comparacao"
+      :carregando="origem.carregando"
+      :comparando="origem.comparando"
+      :erro="origem.erro"
+      @fechar="origem.aberto = false"
+      @comparar="compararOutras"
+    />
   </div>
 </template>

@@ -4,6 +4,7 @@ import MapaGeometria from '@/components/quarentena/MapaGeometria.vue'
 import GeoJsonGeometria from '@/components/quarentena/GeoJsonGeometria.vue'
 import { sugerirCorrecaoGeometria } from '@/services/quarentenaService'
 import { formatarDataHora } from '@/utils/formato'
+import { usePermissoes } from '@/composables/usePermissoes'
 import {
   TIPOS_ERRO,
   STATUS,
@@ -131,6 +132,9 @@ function minusculaInicial(texto) {
 const tipo = computed(() => TIPOS_ERRO[props.registro.tipoErro])
 const status = computed(() => STATUS[props.registro.statusAnalise] ?? STATUS.PENDENTE)
 const encerrado = computed(() => ENCERRADOS.includes(props.registro.statusAnalise))
+// Só quem opera os dados corrige; os demais perfis veem o registro e o histórico, sem editar.
+const { podeOperar } = usePermissoes()
+const editavel = computed(() => podeOperar && !encerrado.value)
 const ponto = computed(() => pontoDoMotivo(props.registro.motivo))
 const original = computed(() => formatarPayload(props.registro.payload))
 const temCorrecao = computed(() => !!props.registro.payloadCorrigido)
@@ -218,7 +222,7 @@ function abrirEditor() {
         <div class="flex flex-wrap items-center justify-between gap-2">
           <p class="text-[12.5px] font-semibold text-slate-200">Geometria</p>
           <div
-            v-if="!carregandoGeometria && (geometria || trabalho || !encerrado)"
+            v-if="!carregandoGeometria && (geometria || trabalho || editavel)"
             class="inline-flex rounded-lg border border-slate-800 bg-slate-950/40 p-0.5"
             role="tablist"
           >
@@ -245,8 +249,8 @@ function abrirEditor() {
           Carregando a geometria…
         </div>
         <!-- Sem geometria legível, mas em aberto: a correção pode vir do GeoJSON em texto -->
-        <template v-else-if="geometria || trabalho || !encerrado">
-          <div v-if="!encerrado" class="flex flex-wrap gap-1.5">
+        <template v-else-if="geometria || trabalho || editavel">
+          <div v-if="editavel" class="flex flex-wrap gap-1.5">
             <button
               v-if="(geometria || trabalho) && visao === 'mapa'"
               type="button"
@@ -294,7 +298,7 @@ function abrirEditor() {
             :original="geometria"
             :trabalho="trabalho"
             :valor-recebido="registro.valorRecebido || ''"
-            :editavel="!encerrado && !salvandoGeometria"
+            :editavel="editavel && !salvandoGeometria"
             @aplicar="aplicarGeoJson"
           />
           <p v-if="visao === 'mapa'" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
@@ -339,7 +343,7 @@ function abrirEditor() {
           Dado original <span class="font-normal text-slate-500">· zona bruta, nunca alterado</span>
         </p>
         <button
-          v-if="!encerrado && !editando"
+          v-if="editavel && !editando"
           type="button"
           class="rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] font-medium text-slate-300
                  transition hover:border-slate-500 hover:text-slate-100"
@@ -394,7 +398,7 @@ function abrirEditor() {
       </ol>
     </section>
 
-    <section v-if="!encerrado">
+    <section v-if="editavel">
       <label class="label" for="justificativa">
         Justificativa <span class="text-slate-500">· obrigatória para descartar</span>
       </label>

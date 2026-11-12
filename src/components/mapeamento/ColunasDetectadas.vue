@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { usePermissoes } from '@/composables/usePermissoes'
 
 /**
  * Painel "Colunas detectadas": as colunas que o sistema encontrou nos
@@ -25,6 +26,8 @@ const props = defineProps({
 })
 
 defineEmits(['selecionar', 'tentar-novamente'])
+
+const { podeOperar } = usePermissoes()
 
 const etiquetas = {
   mapeada: {
@@ -115,7 +118,7 @@ const resumo = computed(() => {
         </div>
 
         <BaseButton
-          v-if="situacaoDe(coluna) === 'nova'"
+          v-if="podeOperar && situacaoDe(coluna) === 'nova'"
           variante="secundario"
           tamanho="sm"
           class="shrink-0"

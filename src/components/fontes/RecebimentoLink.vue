@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import BaseButton from '@/components/BaseButton.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import { formatarDataHora, formatarNumero } from '@/utils/formato'
+import { usePermissoes } from '@/composables/usePermissoes'
 
 /**
  * Aba "Recebimento" de uma fonte por link (modalidade LINK): o link, como a
@@ -23,6 +24,8 @@ const props = defineProps({
 })
 
 defineEmits(['executar', 'testar'])
+
+const { podeOperar } = usePermissoes()
 
 const falhou = computed(() => /falhou/i.test(props.fonte.ultimaColetaMensagem ?? ''))
 
@@ -60,7 +63,7 @@ const caixas = computed(() => [
           reprocessado.
         </p>
       </div>
-      <div class="flex shrink-0 items-center gap-2">
+      <div v-if="podeOperar" class="flex shrink-0 items-center gap-2">
         <BaseButton
           variante="secundario"
           tamanho="sm"

@@ -11,6 +11,7 @@ import FonteUpload from '@/components/fontes/FonteUpload.vue'
 import ArquivoList from '@/components/fontes/ArquivoList.vue'
 import RecebimentoLink from '@/components/fontes/RecebimentoLink.vue'
 import MapeamentoPainel from '@/components/mapeamento/MapeamentoPainel.vue'
+import VersoesFonte from '@/components/fontes/VersoesFonte.vue'
 import { listarColunas } from '@/services/mapeamentosService'
 import {
   listarFontes,
@@ -21,8 +22,10 @@ import {
   executarColeta,
 } from '@/services/fontesService'
 import { processarArquivo, excluirArquivo } from '@/services/arquivosService'
+import { listarVersoesDaFonte } from '@/services/versoesService'
 import { ehProcessavel } from '@/utils/processamento'
 import { formatarDataHora } from '@/utils/formato'
+import { usePermissoes } from '@/composables/usePermissoes'
 
 /**
  * ==================================================================
@@ -42,6 +45,7 @@ import { formatarDataHora } from '@/utils/formato'
 
 const route = useRoute()
 const router = useRouter()
+const { podeOperar } = usePermissoes()
 
 // --- Estado do mapeamento -----------------------------------------
 const novasPorFonte = ref({})
@@ -74,7 +78,7 @@ const fontesVisiveis = computed(() => {
 })
 
 // --- Página da fonte: abas ----------------------------------------
-const ABAS = ['recebimento', 'arquivos', 'mapeamento']
+const ABAS = ['recebimento', 'arquivos', 'mapeamento', 'versoes']
 const aba = computed(() => (ABAS.includes(route.query.aba) ? route.query.aba : 'recebimento'))
 
 function irParaAba(nova) {
@@ -85,7 +89,31 @@ const abas = computed(() => [
   { id: 'recebimento', rotulo: 'Recebimento' },
   { id: 'arquivos', rotulo: 'Arquivos recebidos', contagem: selecionada.value?.arquivos?.length ?? 0 },
   { id: 'mapeamento', rotulo: 'Mapeamento', semRegra: novasPorFonte.value[selecionada.value?.id] ?? 0 },
+  { id: 'versoes', rotulo: 'Versões' },
 ])
+
+// --- Aba Versões ----------------------------------------------------
+const versoes = ref([])
+const carregandoVersoes = ref(false)
+const erroVersoes = ref('')
+let pedidoVersoes = 0
+
+async function carregarVersoes() {
+  const fonteId = selecionada.value?.id
+  if (!fonteId) return
+  const meu = ++pedidoVersoes
+  carregandoVersoes.value = true
+  erroVersoes.value = ''
+  try {
+    const lista = await listarVersoesDaFonte(fonteId)
+    if (meu === pedidoVersoes) versoes.value = lista
+  } catch (e) {
+    if (meu === pedidoVersoes) erroVersoes.value = e.message
+  } finally {
+    if (meu === pedidoVersoes) carregandoVersoes.value = false
+  }
+}
+
 
 // O que trava a fonte aberta: arquivo esperando o mapeamento. Coluna sem regra
 // sozinha não é alerta: muitas ficam sem mapeamento de propósito (objectid, Shape__Area)
@@ -121,6 +149,15 @@ const formRef = ref(null)
 
 // --- Estado do upload ---------------------------------------------
 const selecionada = ref(null)
+
+// Aba Versões: carrega ao abrir a aba ou trocar de fonte com ela aberta.
+watch(
+  () => [aba.value, selecionada.value?.id],
+  ([abaAtual]) => {
+    if (abaAtual === 'versoes') carregarVersoes()
+  },
+)
+
 const enviando = ref(false)
 const progresso = ref(0)
 const uploadRef = ref(null)
@@ -550,7 +587,7 @@ onBeforeUnmount(() => {
         </p>
         <!-- As fontes do projeto já estão cadastradas: o botão fica à vista, mas inativo.
              Para mudar como uma fonte chega (link ou upload), use "Editar" na página dela. -->
-        <span title="As fontes do projeto já estão cadastradas. Para mudar uma delas, abra a fonte e use Editar.">
+        <span v-if="podeOperar" title="As fontes do projeto já estão cadastradas. Para mudar uma delas, abra a fonte e use Editar.">
           <BaseButton tamanho="sm" disabled>
             <AppIcon nome="mais" traco="2.4" class="h-3 w-3" />
             Nova fonte
@@ -626,7 +663,7 @@ onBeforeUnmount(() => {
             </span>
             <StatusBadge :status="selecionada.status" />
             <span class="text-[12px] text-slate-500">· {{ selecionada.orgao }}</span>
-            <BaseButton class="ml-auto" variante="fantasma" tamanho="sm" @click="editarFonte(selecionada)">
+            <BaseButton v-if="podeOperar" class="ml-auto" variante="fantasma" tamanho="sm" @click="editarFonte(selecionada)">
               <AppIcon nome="lapis" class="h-3.5 w-3.5" />
               Editar
             </BaseButton>
@@ -685,7 +722,7 @@ onBeforeUnmount(() => {
             @executar="executar(selecionada)"
             @testar="testarLinkDaFonte"
           />
-          <section v-else class="glass space-y-4 p-5">
+          <section v-else-if="podeOperar" class="glass space-y-4 p-5">
             <div>
               <h2 class="text-sm font-semibold text-white">Enviar arquivo</h2>
               <p class="mt-1 max-w-2xl text-[13px] text-slate-400">
@@ -701,6 +738,13 @@ onBeforeUnmount(() => {
               @enviar="enviar"
             />
           </section>
+          <section v-else class="glass p-5">
+            <h2 class="text-sm font-semibold text-white">Recebimento por upload</h2>
+            <p class="mt-1 max-w-2xl text-[13px] text-slate-400">
+              O envio de arquivos é feito pelo operador de dados. Veja os arquivos já recebidos na aba
+              Arquivos recebidos.
+            </p>
+          </section>
         </template>
 
         <!-- Aba: Arquivos recebidos -->
@@ -713,6 +757,16 @@ onBeforeUnmount(() => {
             @processar="processar"
             @excluir="excluir"
             @mapear="irParaAba('mapeamento')"
+          />
+        </section>
+
+        <!-- Aba: Versões -->
+        <section v-else-if="aba === 'versoes'" class="glass p-5">
+          <VersoesFonte
+            :versoes="versoes"
+            :carregando="carregandoVersoes"
+            :erro="erroVersoes"
+            @tentar-novamente="carregarVersoes"
           />
         </section>
 

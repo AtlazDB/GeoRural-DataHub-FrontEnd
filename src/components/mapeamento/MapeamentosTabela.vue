@@ -1,6 +1,7 @@
 <script setup>
 import BaseButton from '@/components/BaseButton.vue'
 import AppIcon from '@/components/AppIcon.vue'
+import { usePermissoes } from '@/composables/usePermissoes'
 
 /**
  * Colunas já mapeadas: de onde vem, para onde vai e quais regras valem.
@@ -17,6 +18,8 @@ defineProps({
 })
 
 defineEmits(['editar', 'remover'])
+
+const { podeOperar } = usePermissoes()
 
 /** As regras ligadas, em etiquetas curtas. */
 function regrasDe(m) {
@@ -69,6 +72,7 @@ function regrasDe(m) {
       </div>
 
       <BaseButton
+        v-if="podeOperar"
         variante="fantasma"
         tamanho="sm"
         class="shrink-0"
@@ -79,6 +83,7 @@ function regrasDe(m) {
         Editar
       </BaseButton>
       <BaseButton
+        v-if="podeOperar"
         variante="fantasma"
         tamanho="sm"
         class="shrink-0 text-rose-300 hover:text-rose-200"

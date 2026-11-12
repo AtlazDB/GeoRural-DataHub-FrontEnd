@@ -22,6 +22,15 @@ import http from './http'
  *   POST /indicators/:code/deactivate
  *        204 · 404 → { mensagem }
  *
+ *   POST /indicators/:code/calculate
+ *        202 (só dispara a DAG calcular_indicador no Airflow; leva alguns minutos)
+ *        400 → { mensagem } (desativado) · 404 · 503 → { mensagem } (Airflow fora do ar)
+ *
+ *   GET  /indicators/:code/results?codImovel=
+ *        200 → { indicatorCode, codImovel, value, status, numerator, areaImovelHa, calculatedAt }
+ *              (o resultado sobre a versão do imóvel publicada na imovel_rural)
+ *        404 → { mensagem } (indicador não existe ou ainda não calculado para o imóvel)
+ *
  * calculationModel: POINT_DENSITY (pontos por área) | AREA_COVERAGE (% de área coberta)
  * status das faixas: CONFORME | ALERTA | CRITICO | VALIDACAO
  */
@@ -43,4 +52,21 @@ export async function cadastrarIndicador(indicador) {
 
 export async function desativarIndicador(code) {
   await http.post(`/indicators/${encodeURIComponent(code)}/deactivate`)
+}
+
+export async function calcularIndicador(code) {
+  await http.post(`/indicators/${encodeURIComponent(code)}/calculate`)
+}
+
+/** O resultado do indicador para o imóvel, ou null se ainda não foi calculado (404). */
+export async function buscarResultado(code, codImovel) {
+  try {
+    const { data } = await http.get(`/indicators/${encodeURIComponent(code)}/results`, {
+      params: { codImovel },
+    })
+    return data
+  } catch (e) {
+    if (e.original?.response?.status === 404) return null
+    throw e
+  }
 }
