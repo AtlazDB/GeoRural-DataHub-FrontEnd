@@ -40,6 +40,12 @@ const MODELOS = [
     rotulo: 'Cobertura de área',
     ajuda: 'Quanto do imóvel (em %) é coberto pelos polígonos da fonte. A fonte precisa ter só polígonos.',
   },
+  {
+    valor: 'BASE_COVERAGE',
+    rotulo: 'Cobertura dentro de uma camada',
+    ajuda:
+      'Quanto de uma camada base dentro do imóvel (em %) é coberto pela fonte. Ex.: APP conservada = APP com vegetação nativa ÷ APP total. A fonte é a cobertura (vegetação); a camada base (APP) é escolhida abaixo. As duas precisam ter só polígonos. Imóvel sem a camada base não recebe resultado.',
+  },
 ]
 
 const form = ref({
@@ -51,6 +57,12 @@ const form = ref({
   calculationModel: 'POINT_DENSITY',
   factor: 1000,
   category: '',
+  // parameters.since: o <input type="date"> já devolve AAAA-MM-DD, o formato do back e da DAG.
+  since: '',
+  // parameters.extraSources: outras fontes somadas à principal (ex.: ISAP = UC + TI + quilombola).
+  extraSources: [],
+  // parameters.baseSources do BASE_COVERAGE: a camada que vira o denominador (ex.: APP).
+  baseSource: '',
   ranges: [
     { status: 'CONFORME', limit: '', includeLimit: true },
     { status: 'CRITICO', limit: null, includeLimit: null },
@@ -59,6 +71,9 @@ const form = ref({
 
 const modelo = computed(() => MODELOS.find((m) => m.valor === form.value.calculationModel))
 const densidade = computed(() => form.value.calculationModel === 'POINT_DENSITY')
+const porCamada = computed(() => form.value.calculationModel === 'BASE_COVERAGE')
+// A principal não aparece na lista de extras.
+const fontesExtras = computed(() => props.fontes.filter((f) => f.id !== form.value.fonteId))
 
 // Campo que o back apontou como inválido (400 com `campos`, ou 409 na sigla).
 function temErro(campo) {
@@ -93,6 +108,10 @@ function submeter() {
   const parameters = {}
   if (densidade.value) parameters.factor = Number(f.factor)
   if (f.category.trim()) parameters.category = f.category.trim()
+  if (f.since) parameters.since = f.since
+  const extras = f.extraSources.filter((id) => id !== f.fonteId).map(Number)
+  if (extras.length) parameters.extraSources = extras
+  if (porCamada.value && f.baseSource !== '') parameters.baseSources = [Number(f.baseSource)]
 
   emit('salvar', {
     code: f.code.trim().toUpperCase(),
@@ -189,6 +208,39 @@ function submeter() {
     </div>
     <p class="-mt-2 text-xs text-slate-500">{{ modelo.ajuda }}</p>
 
+    <div v-if="porCamada">
+      <label class="label" for="ind-base">Camada base (o denominador)</label>
+      <select id="ind-base" v-model="form.baseSource" :class="classeCampo('parameters')" required>
+        <option value="" disabled>Escolha a camada base, ex.: APP</option>
+        <option v-for="f in fontes" :key="f.id" :value="f.id">{{ f.sigla }} · {{ f.nome }}</option>
+      </select>
+    </div>
+
+    <!-- Fontes extras: o indicador cruza o imóvel com todas juntas -->
+    <details class="rounded-xl border border-slate-800 p-3" :open="form.extraSources.length > 0">
+      <summary class="cursor-pointer text-sm font-medium text-slate-200">
+        Somar outras fontes <span class="text-slate-500">(opcional{{ form.extraSources.length ? ` · ${form.extraSources.length} marcada(s)` : '' }})</span>
+      </summary>
+      <p class="mt-2 text-xs text-slate-500">
+        Para um indicador de várias camadas (ex.: áreas protegidas = UC + terra indígena + quilombola + floresta
+        pública). Na cobertura, a área coberta por mais de uma fonte conta uma vez só. Todas precisam ter o mesmo
+        tipo de geometria da principal.
+      </p>
+      <div
+        :class="['mt-2 max-h-40 space-y-1 overflow-y-auto rounded-lg border p-2', temErro('parameters') ? 'border-rose-500/50' : 'border-slate-800']"
+      >
+        <label
+          v-for="f in fontesExtras"
+          :key="f.id"
+          class="flex cursor-pointer items-center gap-2 text-sm text-slate-300"
+        >
+          <input v-model="form.extraSources" type="checkbox" :value="f.id" />
+          {{ f.sigla }} · {{ f.nome }}
+        </label>
+        <p v-if="!fontesExtras.length" class="text-xs text-slate-500">Nenhuma outra fonte cadastrada.</p>
+      </div>
+    </details>
+
     <!-- Parâmetros -->
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <div v-if="densidade">
@@ -212,9 +264,20 @@ function submeter() {
           placeholder="ex.: AQUA ou MATA"
         />
       </div>
+      <div>
+        <label class="label" for="ind-desde">A partir de <span class="text-slate-500">(opcional)</span></label>
+        <input
+          id="ind-desde"
+          v-model="form.since"
+          type="date"
+          :class="classeCampo('parameters', 'tabular-nums')"
+        />
+      </div>
     </div>
     <p class="-mt-2 text-xs text-slate-500">
-      Categoria: usa só as feições da fonte com essa categoria. Vazio = todas.
+      Categoria: usa só as feições da fonte com essa categoria. A partir de: usa só as feições com data de
+      referência nesse dia ou depois (ex.: desmatamento após 22/07/2008); a fonte precisa ter a coluna de data
+      mapeada em data_referencia. Vazio = sem filtro.
     </p>
 
     <!-- Faixas -->
