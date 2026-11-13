@@ -246,6 +246,14 @@ async function carregar() {
  *      e chame avisar('ok', 'Fonte cadastrada.')
  *   e) no catch, avisar('erro', e.message)
  */
+/** Abre o formulário vazio, para cadastrar uma fonte nova (ex.: camadas dos indicadores: UC, TI, PRODES). */
+function novaFonte() {
+  limparTeste()
+  emEdicao.value = null
+  formRef.value?.limpar()
+  mostrandoForm.value = true
+}
+
 function editarFonte(fonte) {
   limparTeste()
   emEdicao.value = fonte
@@ -585,14 +593,13 @@ onBeforeUnmount(() => {
           <b class="font-medium text-slate-200">coleta automática</b>, quando o sistema busca no link
           do órgão.
         </p>
-        <!-- As fontes do projeto já estão cadastradas: o botão fica à vista, mas inativo.
-             Para mudar como uma fonte chega (link ou upload), use "Editar" na página dela. -->
-        <span v-if="podeOperar" title="As fontes do projeto já estão cadastradas. Para mudar uma delas, abra a fonte e use Editar.">
-          <BaseButton tamanho="sm" disabled>
-            <AppIcon nome="mais" traco="2.4" class="h-3 w-3" />
-            Nova fonte
-          </BaseButton>
-        </span>
+        <!-- Fonte nova: as camadas dos indicadores cadastrados (UC, TI, PRODES, APP...) chegam
+             como fontes. Só para quem opera (T25). Para mudar como uma fonte já existente chega,
+             use "Editar" na página dela. -->
+        <BaseButton v-if="podeOperar" tamanho="sm" @click="novaFonte">
+          <AppIcon nome="mais" traco="2.4" class="h-3 w-3" />
+          Nova fonte
+        </BaseButton>
       </div>
 
       <div class="flex flex-wrap items-center justify-between gap-3">

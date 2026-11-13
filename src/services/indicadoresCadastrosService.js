@@ -32,6 +32,8 @@ import http from './http'
  *        404 → { mensagem } (indicador não existe ou ainda não calculado para o imóvel)
  *
  * calculationModel: POINT_DENSITY (pontos por área) | AREA_COVERAGE (% de área coberta)
+ *   | BASE_COVERAGE (% de uma camada base coberta, ex.: APP com vegetação = IAPP)
+ * parameters: factor, category, since (AAAA-MM-DD), extraSources [ids], baseSources [ids]
  * status das faixas: CONFORME | ALERTA | CRITICO | VALIDACAO
  */
 
@@ -56,6 +58,16 @@ export async function desativarIndicador(code) {
 
 export async function calcularIndicador(code) {
   await http.post(`/indicators/${encodeURIComponent(code)}/calculate`)
+}
+
+/**
+ * O indicador agregado por município: [{ codIbge, name, state, properties, conforme, alerta,
+ * critico, validacao, averageValue, numeratorSum }]. Lista vazia se ainda não foi calculado;
+ * imóveis sem município vêm numa linha com name null.
+ */
+export async function buscarPorMunicipio(code) {
+  const { data } = await http.get(`/indicators/${encodeURIComponent(code)}/municipalities`)
+  return data
 }
 
 /** O resultado do indicador para o imóvel, ou null se ainda não foi calculado (404). */

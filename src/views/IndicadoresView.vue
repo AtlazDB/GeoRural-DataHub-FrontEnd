@@ -8,17 +8,19 @@ import IndicadorForm from '@/components/indicadores/IndicadorForm.vue'
 import { usePermissoes } from '@/composables/usePermissoes'
 import { listarFontes } from '@/services/fontesService'
 import {
+  buscarPorMunicipio,
   cadastrarIndicador,
   calcularIndicador,
   desativarIndicador,
   listarIndicadores,
 } from '@/services/indicadoresCadastrosService'
-import { formatarDataHora } from '@/utils/formato'
+import { formatarDataHora, formatarNumero } from '@/utils/formato'
 
 // Nome de cada modelo de cálculo na tela (o back manda a sigla em inglês).
 const MODELOS = {
   POINT_DENSITY: 'Densidade de pontos',
   AREA_COVERAGE: 'Cobertura de área',
+  BASE_COVERAGE: 'Cobertura dentro de uma camada',
 }
 
 const { podeOperar } = usePermissoes()
@@ -108,6 +110,27 @@ async function calcular(indicador) {
     aviso.value = { tipo: 'erro', texto: e.message }
   } finally {
     calculandoCode.value = null
+  }
+}
+
+// Agregação por município (D4): o indicador aberto no modal e as linhas que o back devolveu.
+const porMunicipio = ref(null) // { indicador, linhas, carregando, erro, filtro }
+
+const linhasMunicipio = computed(() => {
+  const p = porMunicipio.value
+  if (!p?.linhas) return []
+  const filtro = p.filtro.trim().toLowerCase()
+  return filtro ? p.linhas.filter((l) => (l.name ?? 'sem município').toLowerCase().includes(filtro)) : p.linhas
+})
+
+async function abrirPorMunicipio(indicador) {
+  porMunicipio.value = { indicador, linhas: null, carregando: true, erro: '', filtro: '' }
+  try {
+    porMunicipio.value.linhas = await buscarPorMunicipio(indicador.code)
+  } catch (e) {
+    porMunicipio.value.erro = e.message
+  } finally {
+    porMunicipio.value.carregando = false
   }
 }
 
@@ -225,7 +248,13 @@ onMounted(() => {
                 </span>
               </td>
               <td class="py-3 text-right">
-                <div v-if="ind.active && podeOperar" class="flex justify-end gap-2">
+                <div class="flex justify-end gap-2">
+                  <!-- Todos os perfis veem (é leitura). Inativo também: os resultados já calculados continuam valendo. -->
+                  <BaseButton variante="fantasma" tamanho="sm" @click="abrirPorMunicipio(ind)">
+                    Por município
+                  </BaseButton>
+                  <!-- Calcular e desativar: só quem opera (T25), e só em indicador ativo. -->
+                  <template v-if="ind.active && podeOperar">
                   <BaseButton
                     variante="secundario"
                     tamanho="sm"
@@ -238,6 +267,7 @@ onMounted(() => {
                   <BaseButton variante="fantasma" tamanho="sm" @click="paraDesativar = ind">
                     Desativar
                   </BaseButton>
+                  </template>
                 </div>
               </td>
             </tr>
@@ -265,6 +295,66 @@ onMounted(() => {
         @salvar="salvarIndicador"
         @cancelar="cadastroAberto = false"
       />
+    </BaseModal>
+
+    <BaseModal
+      :aberto="!!porMunicipio"
+      :titulo="porMunicipio ? `${porMunicipio.indicador.code} por município` : ''"
+      descricao="O resultado mais recente de cada imóvel, agrupado pelo município dele. Média = média simples do valor dos imóveis; soma = soma do numerador (focos, hectares cobertos...)."
+      largura="max-w-4xl"
+      @fechar="porMunicipio = null"
+    >
+      <template v-if="porMunicipio">
+        <div v-if="porMunicipio.carregando" class="space-y-2">
+          <div v-for="n in 4" :key="n" class="h-9 animate-pulse rounded-lg bg-slate-800/30" />
+        </div>
+        <p v-else-if="porMunicipio.erro" class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+          {{ porMunicipio.erro }}
+        </p>
+        <p v-else-if="!porMunicipio.linhas.length" class="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">
+          Este indicador ainda não foi calculado. Use "Calcular" e volte depois de alguns minutos.
+        </p>
+        <template v-else>
+          <input
+            v-model="porMunicipio.filtro"
+            class="input mb-3"
+            placeholder="Buscar município"
+            aria-label="Buscar município"
+          />
+          <div class="max-h-[60vh] overflow-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="sticky top-0 bg-slate-900 text-[11px] uppercase tracking-wide text-slate-500">
+                <tr class="border-b border-slate-800">
+                  <th class="py-2 pr-3 font-semibold">Município</th>
+                  <th class="py-2 pr-3 text-right font-semibold">Imóveis</th>
+                  <th class="py-2 pr-3 text-right font-semibold text-emerald-400/80">Conforme</th>
+                  <th class="py-2 pr-3 text-right font-semibold text-amber-400/80">Alerta</th>
+                  <th class="py-2 pr-3 text-right font-semibold text-rose-400/80">Crítico</th>
+                  <th class="py-2 pr-3 text-right font-semibold">Validação</th>
+                  <th class="py-2 pr-3 text-right font-semibold">Média ({{ porMunicipio.indicador.unit }})</th>
+                  <th class="py-2 text-right font-semibold">Soma</th>
+                </tr>
+              </thead>
+              <tbody class="tabular-nums">
+                <tr v-for="l in linhasMunicipio" :key="l.codIbge ?? 'sem'" class="border-b border-slate-800/60">
+                  <td class="py-2 pr-3 text-slate-100">
+                    <template v-if="l.name">{{ l.name }} <span class="text-xs text-slate-500">{{ l.state }}</span></template>
+                    <span v-else class="italic text-slate-500">Sem município</span>
+                  </td>
+                  <td class="py-2 pr-3 text-right text-slate-300">{{ formatarNumero(l.properties) }}</td>
+                  <td class="py-2 pr-3 text-right text-emerald-300">{{ formatarNumero(l.conforme) }}</td>
+                  <td class="py-2 pr-3 text-right text-amber-300">{{ formatarNumero(l.alerta) }}</td>
+                  <td class="py-2 pr-3 text-right text-rose-300">{{ formatarNumero(l.critico) }}</td>
+                  <td class="py-2 pr-3 text-right text-slate-400">{{ formatarNumero(l.validacao) }}</td>
+                  <td class="py-2 pr-3 text-right text-slate-200">{{ formatarNumero(l.averageValue) }}</td>
+                  <td class="py-2 text-right text-slate-400">{{ formatarNumero(l.numeratorSum) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-if="!linhasMunicipio.length" class="py-4 text-center text-sm text-slate-500">Nenhum município com esse nome.</p>
+          </div>
+        </template>
+      </template>
     </BaseModal>
 
     <BaseModal
