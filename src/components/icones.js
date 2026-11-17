@@ -30,6 +30,7 @@ export const icones = {
   ],
   atualizar: ['M21 12a9 9 0 1 1-3-6.7', 'M21 4v6h-6'],
   executar: ['M7 5v14l11-7L7 5z'],
+  parar: ['M6 6h12v12H6z'],
   lixeira: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12', 'M9 7V4h6v3'],
   mapa: ['M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z', 'M9 4v14', 'M15 6v14'],
   tabela: ['M4 4h16v16H4z', 'M4 10h16', 'M4 15h16', 'M10 10v10'],

@@ -25,9 +25,11 @@ const props = defineProps({
   resultados: { type: Object, default: () => ({}) },
   /** ids com exclusão em andamento (o botão fica em "carregando") */
   excluindo: { type: Array, default: () => [] },
+  /** ids com interrupção em andamento (o botão fica em "carregando") */
+  cancelando: { type: Array, default: () => [] },
 })
 
-defineEmits(['processar', 'excluir', 'mapear'])
+defineEmits(['processar', 'cancelar', 'excluir', 'mapear'])
 
 const { podeOperar } = usePermissoes()
 
@@ -59,6 +61,27 @@ function podeProcessar(arquivo) {
     ehProcessavel(arquivo) &&
     ['RECEBIDO', 'AGUARDANDO_MAPEAMENTO', 'REJEITADO'].includes(statusDe(arquivo))
   )
+}
+
+// Etapas que o DAG grava em progressStep (gravacao.Progress, no Airflow).
+const etapas = {
+  DOWNLOAD: 'Baixando o arquivo',
+  EXTRACAO: 'Extraindo o arquivo',
+  LEITURA: 'Lendo os registros',
+  GRAVACAO: 'Validando e gravando',
+  CONCLUSAO: 'Concluindo',
+}
+
+/**
+ * Barra de progresso do arquivo em processamento. Antes de o DAG gravar o
+ * primeiro progresso (progress nulo), o arquivo ainda está na fila do Airflow:
+ * a barra fica sem % e só pulsa.
+ */
+function progressoDe(arquivo) {
+  if (statusDe(arquivo) !== 'PROCESSANDO') return null
+  const pct = arquivo.progress
+  if (pct == null) return { pct: null, texto: 'Na fila do Airflow…' }
+  return { pct, texto: etapas[arquivo.progressStep] ?? 'Processando' }
 }
 
 // O back-end também recusa (409) rejeitado que já gerou versão de dados —
@@ -121,6 +144,19 @@ function podeExcluir(arquivo) {
           Processar
         </BaseButton>
 
+        <!-- Só depois que o back gravou PROCESSANDO (arquivo.status): antes disso não há execução para interromper. -->
+        <BaseButton
+          v-if="podeOperar && arquivo.status === 'PROCESSANDO'"
+          variante="fantasma"
+          tamanho="sm"
+          class="shrink-0 text-amber-300 hover:text-amber-200"
+          :carregando="cancelando.includes(arquivo.id)"
+          @click="$emit('cancelar', arquivo)"
+        >
+          <AppIcon v-if="!cancelando.includes(arquivo.id)" nome="parar" traco="2" class="h-3 w-3" />
+          Interromper
+        </BaseButton>
+
         <BaseButton
           v-if="podeOperar && podeExcluir(arquivo)"
           variante="fantasma"
@@ -134,8 +170,33 @@ function podeExcluir(arquivo) {
         </BaseButton>
       </div>
 
+      <!-- Barra de progresso: ocupa o lugar da mensagem enquanto processa -->
+      <div v-if="progressoDe(arquivo)" class="mt-2 space-y-1 pl-7">
+        <div class="flex items-center justify-between text-[11px]">
+          <span class="text-slate-400">{{ progressoDe(arquivo).texto }}</span>
+          <span v-if="progressoDe(arquivo).pct != null" class="font-mono text-cyan-400">
+            {{ progressoDe(arquivo).pct }}%
+          </span>
+        </div>
+        <div
+          class="h-1.5 overflow-hidden rounded-full bg-slate-800"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-valuenow="progressoDe(arquivo).pct ?? undefined"
+          :aria-label="`Processamento de ${arquivo.nome}`"
+        >
+          <div
+            v-if="progressoDe(arquivo).pct != null"
+            class="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-[width] duration-700 ease-out"
+            :style="{ width: progressoDe(arquivo).pct + '%' }"
+          />
+          <div v-else class="h-full w-full animate-pulse rounded-full bg-cyan-500/30" />
+        </div>
+      </div>
+
       <p
-        v-if="resultados[arquivo.id]"
+        v-else-if="resultados[arquivo.id]"
         :class="[
           'mt-1.5 pl-7 text-xs',
           resultados[arquivo.id].tipo === 'ok' ? 'text-emerald-300/90' : 'text-rose-300/90',
