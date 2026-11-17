@@ -18,6 +18,8 @@
  *   GET    /indicators/:code        detalhe de um indicador
  *   POST   /indicators              cadastra um indicador
  *   POST   /indicators/:code/deactivate   desativa (não apaga)
+ *   POST   /indicators/:code/calculate    dispara o cálculo (progresso simulado, ~33 s)
+ *   GET    /indicators/calculations/latest   o último cálculo de cada indicador
  */
 
 import express from 'express'
@@ -334,6 +336,63 @@ function erroNasFaixas(ranges) {
 
 app.get('/indicators', comLatencia, (_req, res) => {
   res.json(indicadores)
+})
+
+// --- Cálculo com progresso (US13.T18). No back, a DAG grava o andamento; aqui ele é simulado
+// pelo tempo desde o disparo: ~3 s na fila, ~30 s calculando e depois concluído. Indicador com
+// "ERRO" na sigla termina em erro, para testar a mensagem.
+const calculos = [] // { id, indicatorCode, requestedAt (ms) }
+let proximoCalculo = 1
+
+function estadoDoCalculo(c) {
+  const s = (Date.now() - c.requestedAt) / 1000
+  const base = {
+    id: c.id,
+    indicatorCode: c.indicatorCode,
+    requestedAt: new Date(c.requestedAt).toISOString(),
+    startedAt: s >= 3 ? new Date(c.requestedAt + 3000).toISOString() : null,
+    finishedAt: null,
+    errorMessage: null,
+  }
+  if (s < 3) return { ...base, status: 'NA_FILA', progress: 0, progressStep: null }
+  if (s < 33) {
+    const pct = Math.round(((s - 3) / 30) * 99)
+    const etapa = pct < 15 ? 'LEITURA' : pct < 85 ? 'CALCULO' : 'GRAVACAO'
+    return { ...base, status: 'EM_ANDAMENTO', progress: pct, progressStep: etapa }
+  }
+  const fim = new Date(c.requestedAt + 33000).toISOString()
+  if (c.indicatorCode.includes('ERRO')) {
+    return { ...base, status: 'ERRO', progress: 45, progressStep: 'CALCULO', finishedAt: fim,
+      errorMessage: 'A fonte 3 não tem dados no insumo genérico (input_feature).' }
+  }
+  return { ...base, status: 'CONCLUIDO', progress: 100, progressStep: 'GRAVACAO', finishedAt: fim }
+}
+
+// Antes de /indicators/:code, senão "calculations" seria lido como sigla.
+app.get('/indicators/calculations/latest', comLatencia, (_req, res) => {
+  const ultimos = new Map()
+  for (const c of calculos) ultimos.set(c.indicatorCode, c) // o último disparo de cada sigla fica
+  res.json([...ultimos.values()].map(estadoDoCalculo))
+})
+
+app.post('/indicators/:code/calculate', comLatencia, (req, res) => {
+  const indicador = acharIndicador(req.params.code)
+  if (!indicador) return res.status(404).json({ mensagem: `Indicador "${req.params.code}" não encontrado.` })
+  if (!indicador.active) {
+    return res.status(400).json({ mensagem: `O indicador "${indicador.code}" está desativado e não é mais calculado.` })
+  }
+  const ativo = calculos
+    .filter((c) => c.indicatorCode === indicador.code)
+    .map(estadoDoCalculo)
+    .find((c) => c.status === 'NA_FILA' || c.status === 'EM_ANDAMENTO')
+  if (ativo) {
+    return res.status(409).json({
+      mensagem: `O indicador "${indicador.code}" já está sendo calculado. Espere terminar para calcular de novo.`,
+    })
+  }
+  const novo = { id: proximoCalculo++, indicatorCode: indicador.code, requestedAt: Date.now() }
+  calculos.push(novo)
+  res.status(202).json(estadoDoCalculo(novo))
 })
 
 app.get('/indicators/:code', comLatencia, (req, res) => {

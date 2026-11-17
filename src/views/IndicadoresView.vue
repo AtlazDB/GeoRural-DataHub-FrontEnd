@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import BaseCard from '@/components/BaseCard.vue'
@@ -13,6 +13,7 @@ import {
   calcularIndicador,
   desativarIndicador,
   listarIndicadores,
+  listarUltimosCalculos,
 } from '@/services/indicadoresCadastrosService'
 import { formatarDataHora, formatarNumero } from '@/utils/formato'
 
@@ -97,17 +98,90 @@ async function carregar() {
 // Sigla do indicador cujo cálculo está sendo disparado (só enquanto o back responde).
 const calculandoCode = ref(null)
 
-// O back só dispara a DAG no Airflow e responde 202: o cálculo em si leva minutos.
+// --- Progresso do cálculo (US13.T18) ---
+// O último cálculo de cada indicador, pela sigla. A DAG grava o andamento no banco e a tela
+// pergunta ao back a cada 3 s enquanto algum estiver na fila ou rodando.
+const calculos = ref({})
+let consulta = null // o setInterval da consulta periódica
+
+const ATIVOS = ['NA_FILA', 'EM_ANDAMENTO']
+
+// Etapas que a DAG grava em progressStep (custom_indicators.CalculationProgress, no Airflow).
+const ETAPAS = {
+  LEITURA: 'Lendo os dados',
+  CALCULO: 'Calculando',
+  GRAVACAO: 'Gravando os resultados',
+}
+
+/**
+ * A barra do indicador enquanto o cálculo está ativo; null quando não há. Na fila (outro
+ * cálculo rodando no Airflow) ainda não há %: a barra só pulsa.
+ */
+function progressoDe(indicador) {
+  const calculo = calculos.value[indicador.code]
+  if (!calculo || !ATIVOS.includes(calculo.status)) return null
+  if (calculo.status === 'NA_FILA') return { pct: null, texto: 'Na fila do Airflow…' }
+  return { pct: calculo.progress, texto: ETAPAS[calculo.progressStep] ?? 'Calculando' }
+}
+
+// O último cálculo terminado: mostra quando foi ou que falhou (a mensagem fica no title).
+function ultimoCalculo(indicador) {
+  const calculo = calculos.value[indicador.code]
+  if (!calculo || ATIVOS.includes(calculo.status)) return null
+  return calculo
+}
+
+const haCalculoAtivo = computed(() => Object.values(calculos.value).some((c) => ATIVOS.includes(c.status)))
+
+async function carregarCalculos() {
+  try {
+    const lista = await listarUltimosCalculos()
+    const novos = Object.fromEntries(lista.map((c) => [c.indicatorCode, c]))
+    avisarSeTerminou(calculos.value, novos)
+    calculos.value = novos
+  } catch {
+    // Sem o andamento, a tela continua funcionando: só não mostra a barra.
+  }
+}
+
+// Aviso quando um cálculo que estava ativo nesta tela termina.
+function avisarSeTerminou(antes, depois) {
+  for (const [code, calculo] of Object.entries(depois)) {
+    if (!ATIVOS.includes(antes[code]?.status) || ATIVOS.includes(calculo.status)) continue
+    aviso.value =
+      calculo.status === 'ERRO'
+        ? { tipo: 'erro', texto: `O cálculo de ${code} falhou: ${calculo.errorMessage ?? 'veja o log no Airflow.'}` }
+        : {
+            tipo: 'sucesso',
+            texto: `O cálculo de ${code} terminou. Os resultados aparecem no card do imóvel, em Consulta, e em "Por município".`,
+          }
+  }
+}
+
+function pararConsulta() {
+  clearInterval(consulta)
+  consulta = null
+}
+
+watch(haCalculoAtivo, (sim) => {
+  if (sim && !consulta) consulta = setInterval(carregarCalculos, 3000)
+  if (!sim) pararConsulta()
+})
+
+onUnmounted(pararConsulta)
+
+// O back registra o cálculo (NA_FILA) e dispara a DAG no Airflow: o cálculo em si leva minutos,
+// e o andamento chega pela consulta periódica.
 async function calcular(indicador) {
   calculandoCode.value = indicador.code
   try {
-    await calcularIndicador(indicador.code)
-    aviso.value = {
-      tipo: 'sucesso',
-      texto: `O cálculo de ${indicador.code} começou no Airflow e leva alguns minutos. Depois, os resultados aparecem no card do imóvel, em Consulta.`,
-    }
+    const calculo = await calcularIndicador(indicador.code)
+    calculos.value = { ...calculos.value, [indicador.code]: calculo }
+    aviso.value = null
   } catch (e) {
     aviso.value = { tipo: 'erro', texto: e.message }
+    // 409: já estava calculando (outra aba, outra pessoa). Busca o andamento para mostrar a barra.
+    if (e.original?.response?.status === 409) carregarCalculos()
   } finally {
     calculandoCode.value = null
   }
@@ -153,6 +227,7 @@ async function confirmarDesativacao() {
 onMounted(() => {
   carregar()
   carregarFontes()
+  carregarCalculos()
 })
 </script>
 
@@ -248,27 +323,69 @@ onMounted(() => {
                 </span>
               </td>
               <td class="py-3 text-right">
-                <div class="flex justify-end gap-2">
+                <div class="flex items-center justify-end gap-2">
                   <!-- Todos os perfis veem (é leitura). Inativo também: os resultados já calculados continuam valendo. -->
                   <BaseButton variante="fantasma" tamanho="sm" @click="abrirPorMunicipio(ind)">
                     Por município
                   </BaseButton>
+
+                  <!-- Barra do cálculo em andamento (US13.T18): todos os perfis veem; ocupa o lugar do Calcular. -->
+                  <div v-if="progressoDe(ind)" class="w-44 space-y-1 text-left">
+                    <div class="flex items-center justify-between gap-2 text-[11px]">
+                      <span class="truncate text-slate-400">{{ progressoDe(ind).texto }}</span>
+                      <span v-if="progressoDe(ind).pct != null" class="font-mono text-cyan-400">
+                        {{ progressoDe(ind).pct }}%
+                      </span>
+                    </div>
+                    <div
+                      class="h-1.5 overflow-hidden rounded-full bg-slate-800"
+                      role="progressbar"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      :aria-valuenow="progressoDe(ind).pct ?? undefined"
+                      :aria-label="`Cálculo de ${ind.code}`"
+                    >
+                      <div
+                        v-if="progressoDe(ind).pct != null"
+                        class="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-[width] duration-700 ease-out"
+                        :style="{ width: progressoDe(ind).pct + '%' }"
+                      />
+                      <div v-else class="h-full w-full animate-pulse rounded-full bg-cyan-500/30" />
+                    </div>
+                  </div>
+
                   <!-- Calcular e desativar: só quem opera (T25), e só em indicador ativo. -->
                   <template v-if="ind.active && podeOperar">
-                  <BaseButton
-                    variante="secundario"
-                    tamanho="sm"
-                    :carregando="calculandoCode === ind.code"
-                    :disabled="!!calculandoCode"
-                    @click="calcular(ind)"
-                  >
-                    Calcular
-                  </BaseButton>
-                  <BaseButton variante="fantasma" tamanho="sm" @click="paraDesativar = ind">
-                    Desativar
-                  </BaseButton>
+                    <BaseButton
+                      v-if="!progressoDe(ind)"
+                      variante="secundario"
+                      tamanho="sm"
+                      :carregando="calculandoCode === ind.code"
+                      :disabled="!!calculandoCode"
+                      @click="calcular(ind)"
+                    >
+                      Calcular
+                    </BaseButton>
+                    <BaseButton variante="fantasma" tamanho="sm" @click="paraDesativar = ind">
+                      Desativar
+                    </BaseButton>
                   </template>
                 </div>
+
+                <!-- O último cálculo terminado: quando foi, ou que falhou (a mensagem no title). -->
+                <p
+                  v-if="ultimoCalculo(ind)?.status === 'CONCLUIDO'"
+                  class="mt-1 text-[11px] text-slate-500 tabular-nums"
+                >
+                  Calculado em {{ formatarDataHora(ultimoCalculo(ind).finishedAt) }}
+                </p>
+                <p
+                  v-else-if="ultimoCalculo(ind)?.status === 'ERRO'"
+                  class="mt-1 text-[11px] text-rose-400"
+                  :title="ultimoCalculo(ind).errorMessage ?? ''"
+                >
+                  O último cálculo falhou
+                </p>
               </td>
             </tr>
           </tbody>
