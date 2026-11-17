@@ -23,8 +23,16 @@ import http from './http'
  *        204 · 404 → { mensagem }
  *
  *   POST /indicators/:code/calculate
- *        202 (só dispara a DAG calcular_indicador no Airflow; leva alguns minutos)
- *        400 → { mensagem } (desativado) · 404 · 503 → { mensagem } (Airflow fora do ar)
+ *        202 → o cálculo (forma abaixo), NA_FILA. Só dispara a DAG calcular_indicador no Airflow;
+ *              leva alguns minutos, e o andamento vem pelo GET /indicators/calculations/latest.
+ *        400 → { mensagem } (desativado) · 404 · 409 → { mensagem } (já está sendo calculado)
+ *        503 → { mensagem } (Airflow fora do ar)
+ *
+ *   GET  /indicators/calculations/latest
+ *        200 → [ { id, indicatorCode, status, progress, progressStep, requestedAt, startedAt,
+ *                  finishedAt, errorMessage } ]   o último cálculo de cada indicador
+ *        status: NA_FILA | EM_ANDAMENTO | CONCLUIDO | ERRO · progress: 0 a 100
+ *        progressStep: LEITURA | CALCULO | GRAVACAO (gravado pela DAG)
  *
  *   GET  /indicators/:code/results?codImovel=
  *        200 → { indicatorCode, codImovel, value, status, numerator, areaImovelHa, calculatedAt }
@@ -56,8 +64,16 @@ export async function desativarIndicador(code) {
   await http.post(`/indicators/${encodeURIComponent(code)}/deactivate`)
 }
 
+/** Dispara o cálculo e devolve o cálculo criado (NA_FILA). */
 export async function calcularIndicador(code) {
-  await http.post(`/indicators/${encodeURIComponent(code)}/calculate`)
+  const { data } = await http.post(`/indicators/${encodeURIComponent(code)}/calculate`)
+  return data
+}
+
+/** O último cálculo de cada indicador, com o progresso (para a barra da tela). */
+export async function listarUltimosCalculos() {
+  const { data } = await http.get('/indicators/calculations/latest')
+  return data
 }
 
 /**
