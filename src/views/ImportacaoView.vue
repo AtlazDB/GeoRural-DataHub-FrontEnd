@@ -21,7 +21,7 @@ import {
   testarLink,
   executarColeta,
 } from '@/services/fontesService'
-import { processarArquivo, excluirArquivo } from '@/services/arquivosService'
+import { processarArquivo, cancelarArquivo, excluirArquivo } from '@/services/arquivosService'
 import { listarVersoesDaFonte } from '@/services/versoesService'
 import { ehProcessavel } from '@/utils/processamento'
 import { formatarDataHora } from '@/utils/formato'
@@ -173,6 +173,7 @@ const emProcessamento = ref([]) // ids mandados processar que ainda não respond
 const naFilaAirflow = ref({}) // id → arquivo: processamento entregue ao Airflow, ainda sem resultado
 const resultados = ref({}) // id do arquivo → { tipo, texto } do último processamento
 const excluindo = ref([]) // ids com exclusão em andamento
+const cancelando = ref([]) // ids com interrupção em andamento
 let consulta = null // o setInterval da consulta periódica
 let atualizando = false
 
@@ -424,6 +425,25 @@ async function processar(arquivo) {
   }
 }
 
+/**
+ * Arquivos da fonte que pararam esperando o mapeamento. Na aba Mapeamento,
+ * depois de mapear as colunas, o usuário reprocessa todos de uma vez, sem
+ * precisar voltar à aba Arquivos recebidos e clicar arquivo por arquivo.
+ */
+const aguardandoMapeamento = computed(
+  () =>
+    selecionada.value?.arquivos?.filter(
+      (a) => a.status === 'AGUARDANDO_MAPEAMENTO' && ehProcessavel(a),
+    ) ?? [],
+)
+
+function reprocessarAguardando() {
+  const arquivos = [...aguardandoMapeamento.value]
+  // Leva para a aba dos arquivos, onde aparece a barra de progresso de cada um.
+  irParaAba('arquivos')
+  arquivos.forEach((a) => processar(a))
+}
+
 // O resultado fica na linha do arquivo e também sobe como aviso, para
 // quem estiver olhando outra fonte quando o processamento terminar.
 function concluir(arquivo, tipo, texto) {
@@ -511,6 +531,36 @@ function pararConsulta() {
 }
 
 watch(haProcessando, (sim) => (sim ? iniciarConsulta() : pararConsulta()))
+
+/**
+ * Interrompe o processamento em andamento. Não há pausa: o Airflow encerra a
+ * execução e, para continuar, o usuário processa de novo (recomeça do início,
+ * com o mesmo mapeamento). Erros (409, 503) chegam prontos pelo http.js.
+ */
+async function cancelar(arquivo) {
+  const confirmado = window.confirm(
+    `Interromper o processamento de "${arquivo.nome}"?\n\n` +
+      'Para continuar depois, clique em Processar: ele recomeça do início, com o mesmo mapeamento.',
+  )
+  if (!confirmado || cancelando.value.includes(arquivo.id)) return
+
+  cancelando.value.push(arquivo.id)
+  try {
+    await cancelarArquivo(arquivo.id)
+    // Sai da fila antes da próxima consulta, senão ela mostraria "Rejeitado no processamento".
+    delete naFilaAirflow.value[arquivo.id]
+    resultados.value[arquivo.id] = {
+      tipo: 'erro',
+      texto: 'Processamento interrompido. Clique em Processar para recomeçar.',
+    }
+    avisar('ok', `${arquivo.nome}: processamento interrompido.`)
+    await atualizar()
+  } catch (e) {
+    avisar('erro', e.message)
+  } finally {
+    cancelando.value = cancelando.value.filter((x) => x !== arquivo.id)
+  }
+}
 
 /**
  * Exclui um arquivo REJEITADO — do catálogo e da zona bruta, sem volta.
@@ -761,7 +811,9 @@ onBeforeUnmount(() => {
             :em-processamento="emProcessamento"
             :resultados="resultados"
             :excluindo="excluindo"
+            :cancelando="cancelando"
             @processar="processar"
+            @cancelar="cancelar"
             @excluir="excluir"
             @mapear="irParaAba('mapeamento')"
           />
@@ -785,6 +837,27 @@ onBeforeUnmount(() => {
             cumprir</b>. É o que permite receber dados de órgãos diferentes, cada um com seu formato.
             Registro que não cumpre uma regra vai para a quarentena.
           </p>
+
+          <!-- Arquivos esperando o mapeamento: reprocessa todos depois de mapear -->
+          <div
+            v-if="podeOperar && aguardandoMapeamento.length"
+            class="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3"
+          >
+            <AppIcon nome="arquivo" traco="1.8" class="h-4 w-4 shrink-0 text-amber-300" />
+            <p class="min-w-0 flex-1 text-[13px] text-amber-100">
+              {{
+                aguardandoMapeamento.length === 1
+                  ? '1 arquivo está aguardando o mapeamento.'
+                  : `${aguardandoMapeamento.length} arquivos estão aguardando o mapeamento.`
+              }}
+              Terminou de mapear as colunas? Reprocesse para carregar os dados.
+            </p>
+            <BaseButton tamanho="sm" class="shrink-0" @click="reprocessarAguardando">
+              <AppIcon nome="executar" traco="2.2" class="h-3 w-3" />
+              Reprocessar
+            </BaseButton>
+          </div>
+
           <MapeamentoPainel
             :fonte="selecionada"
             :ativo="aba === 'mapeamento'"
