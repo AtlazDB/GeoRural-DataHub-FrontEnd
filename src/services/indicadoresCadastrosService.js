@@ -22,6 +22,9 @@ import http from './http'
  *   POST /indicators/:code/deactivate
  *        204 · 404 → { mensagem }
  *
+ *   POST /indicators/:code/activate      (liga de novo, mesma regra)
+ *        204 · 404 → { mensagem }
+ *
  *   POST /indicators/:code/calculate
  *        202 → o cálculo (forma abaixo), NA_FILA. Só dispara a DAG calcular_indicador no Airflow;
  *              leva alguns minutos, e o andamento vem pelo GET /indicators/calculations/latest.
@@ -62,6 +65,11 @@ export async function cadastrarIndicador(indicador) {
 
 export async function desativarIndicador(code) {
   await http.post(`/indicators/${encodeURIComponent(code)}/deactivate`)
+}
+
+/** Liga de novo um indicador desativado (204, mesma regra de antes). */
+export async function ativarIndicador(code) {
+  await http.post(`/indicators/${encodeURIComponent(code)}/activate`)
 }
 
 /** Dispara o cálculo e devolve o cálculo criado (NA_FILA). */
