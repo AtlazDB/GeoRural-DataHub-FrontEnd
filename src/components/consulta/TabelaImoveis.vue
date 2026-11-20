@@ -24,6 +24,15 @@ defineEmits(['selecionar', 'mudar-pagina', 'tentar-novamente'])
 const totalPaginas = computed(() => Math.max(1, Math.ceil(props.total / props.tamanho)))
 const primeiro = computed(() => (props.pagina - 1) * props.tamanho + 1)
 const ultimo = computed(() => Math.min(props.pagina * props.tamanho, props.total))
+
+/**
+ * O código do CAR é longo (PR-4100103- + 32 letras/números) e quebrava a tabela. Mostra o começo e o
+ * fim ("PR-4100103-A2D6…72AA"); o código inteiro fica no title (passar o mouse) e no card do imóvel.
+ */
+function codigoCurto(codigo) {
+  if (!codigo || codigo.length <= 22) return codigo
+  return `${codigo.slice(0, 15)}…${codigo.slice(-4)}`
+}
 </script>
 
 <template>
@@ -62,10 +71,9 @@ const ultimo = computed(() => Math.min(props.pagina * props.tamanho, props.total
          para não ser uma rolagem grande dentro da outra. -->
     <div class="max-h-[40dvh] overflow-auto overscroll-contain rounded-xl border border-slate-800 lg:max-h-[440px]">
       <table class="w-full text-left text-sm">
-        <thead class="sticky top-0 bg-slate-900 text-[10.5px] uppercase tracking-wider text-slate-500">
+        <thead class="sticky top-0 z-10 bg-slate-900 text-[10.5px] uppercase tracking-wider text-slate-500">
           <tr>
-            <th class="px-3 py-2.5 font-semibold">Código</th>
-            <th class="px-3 py-2.5 font-semibold">Município</th>
+            <th class="px-3 py-2.5 font-semibold">Imóvel</th>
             <th class="px-3 py-2.5 font-semibold">Situação</th>
             <th class="px-3 py-2.5 text-right font-semibold">Área</th>
           </tr>
@@ -86,10 +94,13 @@ const ultimo = computed(() => Math.min(props.pagina * props.tamanho, props.total
             @keydown.enter.prevent="$emit('selecionar', imovel)"
             @keydown.space.prevent="$emit('selecionar', imovel)"
           >
-            <td class="px-3 py-2.5 font-mono text-[12px] text-cyan-400">{{ imovel.codImovel }}</td>
-            <td class="px-3 py-2.5">{{ imovel.municipio ?? '—' }}</td>
-            <td class="px-3 py-2.5">{{ formatarSituacao(imovel.situacao) }}</td>
-            <td class="whitespace-nowrap px-3 py-2.5 text-right">{{ formatarArea(imovel.areaHa) }}</td>
+            <!-- Código (curto, inteiro no title) em cima e município embaixo: cabe sem rolar para o lado. -->
+            <td class="px-3 py-2" :title="imovel.codImovel">
+              <span class="block whitespace-nowrap font-mono text-[12px] text-cyan-400">{{ codigoCurto(imovel.codImovel) }}</span>
+              <span class="block text-[12px] text-slate-400">{{ imovel.municipio ?? '—' }}</span>
+            </td>
+            <td class="whitespace-nowrap px-3 py-2 text-[12.5px]">{{ formatarSituacao(imovel.situacao) }}</td>
+            <td class="whitespace-nowrap px-3 py-2 text-right text-[12.5px] tabular-nums">{{ formatarArea(imovel.areaHa) }}</td>
           </tr>
         </tbody>
       </table>

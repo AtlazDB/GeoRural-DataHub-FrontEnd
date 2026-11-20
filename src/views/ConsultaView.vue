@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import BaseCard from '@/components/BaseCard.vue'
+import AppIcon from '@/components/AppIcon.vue'
 import FiltroTerritorio from '@/components/consulta/FiltroTerritorio.vue'
 import MapaImoveis from '@/components/consulta/MapaImoveis.vue'
 import TabelaImoveis from '@/components/consulta/TabelaImoveis.vue'
@@ -98,7 +98,8 @@ function aoMudarLargura(e) {
 // continua abrindo/recolhendo; se moveu mais que LIMIAR px, foi arrasto.
 const MARGEM = 16
 const LIMIAR = 4
-const posicao = ref({ x: MARGEM, y: MARGEM })
+// Começa abaixo do botão "Voltar ao painel" (que fica no canto de cima, à esquerda).
+const posicao = ref({ x: MARGEM, y: 64 })
 let arrasto = null // { inicioX, inicioY, origemX, origemY, moveu }
 let ignorarClique = false
 
@@ -501,9 +502,19 @@ onBeforeUnmount(() => {
       @selecionar="selecionarDoMapa"
     />
 
+    <!-- Voltar ao Dashboard: canto superior esquerdo (o zoom fica embaixo, à direita) -->
+    <RouterLink
+      :to="{ name: 'dashboard' }"
+      class="glass-mapa absolute left-4 top-4 z-20 inline-flex items-center gap-1.5 px-3 py-2 text-[12.5px]
+             font-medium text-slate-200 transition hover:text-cyan-300"
+    >
+      <AppIcon nome="voltar" class="h-3.5 w-3.5" />
+      Voltar ao painel
+    </RouterLink>
+
     <!-- Legenda: canto superior direito -->
     <div
-      class="glass-mapa pointer-events-none absolute right-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] flex-col
+      class="glass-mapa pointer-events-none absolute right-4 top-4 z-20 flex max-w-[calc(100%-2rem)] flex-col
              gap-1 px-3 py-2 text-[11px] text-slate-400 sm:flex-row sm:gap-x-4"
     >
       <span class="flex items-center gap-1.5">
@@ -518,10 +529,12 @@ onBeforeUnmount(() => {
 
     <!-- Painel: arrastável pelo mapa (lg+) ou gaveta embaixo (celular).
          Na tela larga, left/top vêm de estiloPainel. -->
+    <!-- Painel: um bloco só (barra + seções), arrastável pelo mapa (lg+) ou gaveta embaixo
+         (celular). Na tela larga, left/top vêm de estiloPainel. -->
     <aside
       ref="painelRef"
       :class="[
-        'absolute z-20 flex flex-col gap-2',
+        'glass-mapa absolute z-20 flex flex-col overflow-hidden',
         'lg:bottom-auto lg:right-auto lg:w-[460px]',
         painelAberto ? 'inset-x-2 bottom-2 max-h-[65%]' : 'bottom-2 left-2',
       ]"
@@ -530,8 +543,11 @@ onBeforeUnmount(() => {
     >
       <button
         type="button"
-        class="glass-mapa flex shrink-0 select-none items-center justify-between gap-3 px-4 py-2.5 text-left
-               text-sm font-medium text-slate-200 transition hover:text-white lg:cursor-move lg:touch-none"
+        :class="[
+          'flex shrink-0 select-none items-center justify-between gap-3 px-4 py-3 text-left',
+          'text-sm font-semibold text-slate-100 transition hover:text-white lg:cursor-move lg:touch-none',
+          painelAberto && 'border-b border-slate-800',
+        ]"
         :aria-expanded="painelAberto"
         title="Arraste para mover o painel; clique para abrir ou recolher"
         @pointerdown="iniciarArrasto"
@@ -548,15 +564,17 @@ onBeforeUnmount(() => {
             <circle cx="6" cy="12" r="1.2" /><circle cx="10" cy="12" r="1.2" />
           </svg>
           Filtro e imóveis
-          <span v-if="total" class="font-normal text-slate-500">{{ formatarNumero(total) }}</span>
         </span>
-        <span class="text-xs text-slate-400">{{ painelAberto ? 'Recolher' : 'Abrir' }}</span>
+        <span class="text-xs font-normal text-slate-400">{{ painelAberto ? 'Recolher' : 'Abrir' }}</span>
       </button>
 
       <!-- overscroll-contain: no Android, chegar ao topo da gaveta e puxar
            não dispara o "puxar para recarregar" da página inteira. -->
-      <div v-show="painelAberto" class="min-h-0 space-y-2 overflow-y-auto overscroll-contain rounded-2xl">
-        <BaseCard class="glass-mapa">
+      <div
+        v-show="painelAberto"
+        class="min-h-0 flex-1 divide-y divide-slate-800 overflow-y-auto overscroll-contain"
+      >
+        <section class="p-4">
           <FiltroTerritorio
             v-model:cod-ibge="codIbge"
             v-model:cod-imovel="codImovel"
@@ -566,9 +584,13 @@ onBeforeUnmount(() => {
             :carregando="carregandoMunicipios"
             :erro="erroMunicipios || erroContorno"
           />
-        </BaseCard>
+        </section>
 
-        <BaseCard class="glass-mapa" titulo="Imóveis" :contagem="total ? formatarNumero(total) : ''">
+        <section class="p-4">
+          <h2 class="mb-3 flex items-baseline gap-2 text-sm font-semibold text-slate-100">
+            Imóveis
+            <span v-if="total" class="text-xs font-normal text-slate-500">{{ formatarNumero(total) }}</span>
+          </h2>
           <TabelaImoveis
             :itens="itens"
             :total="total"
@@ -581,13 +603,12 @@ onBeforeUnmount(() => {
             @mudar-pagina="mudarPagina"
             @tentar-novamente="carregarPagina"
           />
-        </BaseCard>
+        </section>
 
-        <div ref="indicadoresRef">
-          <BaseCard class="glass-mapa" titulo="Indicadores do imóvel">
-            <template v-if="selecionadoCod" #subtitulo>
-              <p class="truncate font-mono text-[11.5px] text-cyan-400">{{ selecionadoCod }}</p>
-            </template>
+        <section ref="indicadoresRef" class="p-4">
+          <h2 class="text-sm font-semibold text-slate-100">Indicadores do imóvel</h2>
+          <p v-if="selecionadoCod" class="mt-0.5 truncate font-mono text-[11.5px] text-cyan-400">{{ selecionadoCod }}</p>
+          <div class="mt-3">
             <CardIndicadores
               :cod-imovel="selecionadoCod"
               :indicadores="indicadores"
@@ -599,8 +620,8 @@ onBeforeUnmount(() => {
               @origem="abrirOrigem"
             />
             <CardIndicadoresCadastrados :cod-imovel="selecionadoCod" />
-          </BaseCard>
-        </div>
+          </div>
+        </section>
       </div>
     </aside>
     <ModalOrigem

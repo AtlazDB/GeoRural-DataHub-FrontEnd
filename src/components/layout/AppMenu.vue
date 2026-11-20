@@ -34,7 +34,7 @@ const todosOsGrupos = [
   },
     {
     nome: 'Administração',
-    itens: [{ rota: 'usuarios', rotulo: 'Usuários e perfis', icone: 'escudo' }],
+    itens: [{ rota: 'usuarios', rotulo: 'Usuários e perfis', icone: 'usuarios' }],
   },
 ]
 
