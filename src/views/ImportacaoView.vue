@@ -20,6 +20,7 @@ import {
   enviarArquivo,
   testarLink,
   executarColeta,
+  alterarAtivaFonte,
 } from '@/services/fontesService'
 import { processarArquivo, cancelarArquivo, excluirArquivo } from '@/services/arquivosService'
 import { listarVersoesDaFonte } from '@/services/versoesService'
@@ -51,16 +52,18 @@ const { podeOperar } = usePermissoes()
 const novasPorFonte = ref({})
 
 // --- Lista: filtro por como os dados chegam e busca --------------
-const filtro = ref('todas') // todas | LINK | MANUAL
+const filtro = ref('todas') // todas | LINK | MANUAL | INATIVAS
 const busca = ref('')
 
 const filtros = [
   { valor: 'todas', rotulo: 'Todas' },
   { valor: 'LINK', rotulo: 'Coleta automática' },
   { valor: 'MANUAL', rotulo: 'Upload' },
+  { valor: 'INATIVAS', rotulo: 'Desativadas' },
 ]
 
 function doFiltro(fonte, valor) {
+  if (valor === 'INATIVAS') return fonte.status === 'inativa'
   return valor === 'todas' || (valor === 'LINK') === (fonte.modalidade === 'LINK')
 }
 
@@ -70,11 +73,14 @@ function contar(valor) {
 
 const fontesVisiveis = computed(() => {
   const termo = busca.value.trim().toLowerCase()
-  return fontes.value.filter(
-    (f) =>
-      doFiltro(f, filtro.value) &&
-      (!termo || `${f.nome} ${f.sigla} ${f.orgao}`.toLowerCase().includes(termo)),
-  )
+  return fontes.value
+    .filter(
+      (f) =>
+        doFiltro(f, filtro.value) &&
+        (!termo || `${f.nome} ${f.sigla} ${f.orgao}`.toLowerCase().includes(termo)),
+    )
+    // Desativadas vão para o fim; entre as do mesmo grupo, a ordem de antes não muda.
+    .sort((a, b) => Number(a.status === 'inativa') - Number(b.status === 'inativa'))
 })
 
 // --- Página da fonte: abas ----------------------------------------
@@ -167,6 +173,7 @@ const testando = ref(false)
 const teste = ref(null) // a resposta do último "Testar link"
 const erroTeste = ref('')
 const executandoId = ref(null) // fonte com coleta em andamento
+const alternandoId = ref(null) // fonte com a chave de ativar sendo trocada
 
 // --- Estado do processamento --------------------------------------
 const emProcessamento = ref([]) // ids mandados processar que ainda não responderam
@@ -338,6 +345,26 @@ async function executar(fonte) {
     avisar('erro', e.message)
   } finally {
     executandoId.value = null
+  }
+}
+
+/**
+ * Chave do card (e botão "Ativar" da página da fonte): liga ou desliga a fonte.
+ * Desativada, ela não recebe arquivo nem coleta; os dados já carregados continuam.
+ */
+async function alternarAtiva(fonte) {
+  const ativar = fonte.status === 'inativa'
+  alternandoId.value = fonte.id
+  try {
+    const atualizada = await alterarAtivaFonte(fonte.id, ativar)
+    const i = fontes.value.findIndex((f) => f.id === atualizada.id)
+    if (i !== -1) fontes.value[i] = atualizada
+    if (selecionada.value?.id === atualizada.id) selecionada.value = atualizada
+    avisar('ok', ativar ? `Fonte ${atualizada.sigla} ativada.` : `Fonte ${atualizada.sigla} desativada.`)
+  } catch (e) {
+    avisar('erro', e.message)
+  } finally {
+    alternandoId.value = null
   }
 }
 
@@ -683,7 +710,10 @@ onBeforeUnmount(() => {
         :erro="erro"
         :novas="novasPorFonte"
         :filtrada="fontes.length > 0"
+        :pode-operar="podeOperar"
+        :alternando-id="alternandoId"
         @selecionar="selecionar"
+        @alternar-ativa="alternarAtiva"
         @tentar-novamente="carregar"
       />
     </template>
@@ -769,8 +799,29 @@ onBeforeUnmount(() => {
 
         <!-- Aba: Recebimento -->
         <template v-if="aba === 'recebimento'">
+          <!-- Fonte desativada: nada de upload nem coleta até religar -->
+          <section
+            v-if="selecionada.status === 'inativa'"
+            class="glass flex flex-wrap items-center gap-3 p-5"
+          >
+            <div class="min-w-0 flex-1">
+              <h2 class="text-sm font-semibold text-white">Fonte desativada</h2>
+              <p class="mt-1 max-w-2xl text-[13px] text-slate-400">
+                Esta fonte não recebe arquivos nem coletas enquanto estiver desativada. Os dados que ela
+                já trouxe continuam valendo.
+              </p>
+            </div>
+            <BaseButton
+              v-if="podeOperar"
+              tamanho="sm"
+              :disabled="alternandoId === selecionada.id"
+              @click="alternarAtiva(selecionada)"
+            >
+              Ativar fonte
+            </BaseButton>
+          </section>
           <RecebimentoLink
-            v-if="selecionada.modalidade === 'LINK'"
+            v-else-if="selecionada.modalidade === 'LINK'"
             :fonte="selecionada"
             :executando="executandoId === selecionada.id"
             :testando="testando"
