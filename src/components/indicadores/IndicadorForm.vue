@@ -63,6 +63,9 @@ const form = ref({
   extraSources: [],
   // parameters.baseSources do BASE_COVERAGE: a camada que vira o denominador (ex.: APP).
   baseSource: '',
+  // parameters.minimumPercent da cobertura de área: o mínimo exigido em % (ex.: 20 na RL do Paraná).
+  // Com ele, o card do imóvel mostra quantos hectares faltam (déficit) ou sobram (excedente).
+  minimumPercent: '',
   ranges: [
     { status: 'CONFORME', limit: '', includeLimit: true },
     { status: 'CRITICO', limit: null, includeLimit: null },
@@ -72,6 +75,7 @@ const form = ref({
 const modelo = computed(() => MODELOS.find((m) => m.valor === form.value.calculationModel))
 const densidade = computed(() => form.value.calculationModel === 'POINT_DENSITY')
 const porCamada = computed(() => form.value.calculationModel === 'BASE_COVERAGE')
+const coberturaDeArea = computed(() => form.value.calculationModel === 'AREA_COVERAGE')
 // A principal não aparece na lista de extras.
 const fontesExtras = computed(() => props.fontes.filter((f) => f.id !== form.value.fonteId))
 
@@ -112,6 +116,9 @@ function submeter() {
   const extras = f.extraSources.filter((id) => id !== f.fonteId).map(Number)
   if (extras.length) parameters.extraSources = extras
   if (porCamada.value && f.baseSource !== '') parameters.baseSources = [Number(f.baseSource)]
+  if (coberturaDeArea.value && f.minimumPercent !== '' && f.minimumPercent !== null) {
+    parameters.minimumPercent = Number(f.minimumPercent)
+  }
 
   emit('salvar', {
     code: f.code.trim().toUpperCase(),
@@ -279,6 +286,25 @@ function submeter() {
       referência nesse dia ou depois (ex.: desmatamento após 22/07/2008); a fonte precisa ter a coluna de data
       mapeada em data_referencia. Vazio = sem filtro.
     </p>
+
+    <!-- Mínimo exigido: só na cobertura de área (ex.: Reserva Legal) -->
+    <div v-if="coberturaDeArea">
+      <label class="label" for="ind-minimo">Mínimo exigido (%) <span class="text-slate-500">(opcional)</span></label>
+      <input
+        id="ind-minimo"
+        v-model="form.minimumPercent"
+        type="number"
+        min="0"
+        max="100"
+        step="any"
+        :class="classeCampo('parameters', 'tabular-nums')"
+        placeholder="ex.: 20"
+      />
+      <p class="mt-1 text-xs text-slate-500">
+        Quanto do imóvel a lei exige (ex.: 20% de Reserva Legal no Paraná). Com ele, o imóvel mostra o
+        déficit ou o excedente em hectares. Vazio = não mostra.
+      </p>
+    </div>
 
     <!-- Faixas -->
     <div :class="['rounded-xl border p-3', temErro('ranges') ? 'border-rose-500/50' : 'border-slate-800']">

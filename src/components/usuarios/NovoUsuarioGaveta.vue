@@ -3,12 +3,15 @@ import { computed, reactive, ref, watch } from 'vue'
 import BaseGaveta from '@/components/BaseGaveta.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import SeletorCidades from '@/components/usuarios/SeletorCidades.vue'
-import { PERFIS } from '@/components/usuarios/perfis'
+import { CATALOGO_PADRAO, expandir } from '@/components/usuarios/perfis'
 import { criarUsuario } from '@/services/usuariosService'
+import { gerarSenhaProvisoria } from '@/utils/senha'
 
 /** Cadastro de usuário pelo gestor (US10). A senha é provisória: o Keycloak pede outra no primeiro login. */
 const props = defineProps({
   aberto: { type: Boolean, default: false },
+  /** perfis que podem ser marcados (os 4 do sistema e os combinados), vindos da UsuariosView */
+  catalogo: { type: Array, default: () => CATALOGO_PADRAO },
 })
 const emit = defineEmits(['fechar', 'criado'])
 
@@ -24,6 +27,9 @@ const vazio = () => ({
 })
 
 const form = reactive(vazio())
+
+// Analista direto ou dentro de um perfil combinado: aí a escolha de cidades aparece.
+const temAnalista = computed(() => expandir(form.perfis, props.catalogo).includes('ANALISTA'))
 const salvando = ref(false)
 const erro = ref('')
 
@@ -37,9 +43,7 @@ watch(
 )
 
 function gerarSenha() {
-  const letras = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'
-  const sorteio = crypto.getRandomValues(new Uint32Array(12))
-  form.senhaProvisoria = Array.from(sorteio, (n) => letras[n % letras.length]).join('')
+  form.senhaProvisoria = gerarSenhaProvisoria()
 }
 
 const pendencia = computed(() => {
@@ -48,7 +52,7 @@ const pendencia = computed(() => {
   if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) return 'Informe um e-mail válido.'
   if (form.senhaProvisoria.length < 8) return 'A senha provisória precisa de pelo menos 8 caracteres.'
   if (!form.perfis.length) return 'Marque pelo menos um perfil.'
-  if (form.perfis.includes('ANALISTA') && !form.todasCidades && !form.municipios.length) {
+  if (temAnalista.value && !form.todasCidades && !form.municipios.length) {
     return 'Escolha pelo menos uma cidade, ou libere todas.'
   }
   return ''
@@ -62,7 +66,7 @@ async function criar() {
       ...form,
       username: form.username.trim(),
       email: form.email.trim(),
-      todasCidades: !form.perfis.includes('ANALISTA') || form.todasCidades,
+      todasCidades: !temAnalista.value || form.todasCidades,
     })
     emit('criado', criado)
   } catch (e) {
@@ -107,7 +111,7 @@ async function criar() {
       <fieldset class="space-y-2" :disabled="salvando">
         <legend class="mb-2 text-sm font-medium text-slate-100">Perfis</legend>
         <label
-          v-for="p in PERFIS"
+          v-for="p in catalogo"
           :key="p.codigo"
           :class="[
             'flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 transition',
@@ -124,7 +128,7 @@ async function criar() {
         </label>
       </fieldset>
 
-      <section v-if="form.perfis.includes('ANALISTA')" class="rounded-xl border border-slate-800 p-4">
+      <section v-if="temAnalista" class="rounded-xl border border-slate-800 p-4">
         <SeletorCidades
           v-model:todas="form.todasCidades"
           v-model:selecionadas="form.municipios"
@@ -142,7 +146,15 @@ async function criar() {
     </form>
 
     <template #rodape>
-      <p v-if="pendencia" class="mr-auto text-xs text-slate-500">{{ pendencia }}</p>
+      <!-- Por que o "Criar usuário" está bloqueado: o aviso geral e o que falta agora. -->
+      <p
+        v-if="pendencia"
+        role="status"
+        class="mr-auto rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200"
+      >
+        <span class="font-semibold">Todos os campos devem estar preenchidos.</span>
+        <span class="text-amber-200/80">{{ pendencia }}</span>
+      </p>
       <BaseButton variante="fantasma" :disabled="salvando" @click="emit('fechar')">Cancelar</BaseButton>
       <BaseButton :carregando="salvando" :disabled="!!pendencia" @click="criar">Criar usuário</BaseButton>
     </template>

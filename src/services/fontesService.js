@@ -163,6 +163,17 @@ export async function atualizarFonte(fonteId, fonte) {
 }
 
 /**
+ * Liga ou desliga a fonte (chave do card).
+ *   POST /fontes/:id/ativar     200 → a fonte
+ *   POST /fontes/:id/desativar  200 → a fonte (status 'inativa')
+ * Fonte desativada não recebe arquivo nem coleta; os dados já carregados continuam.
+ */
+export async function alterarAtivaFonte(fonteId, ativa) {
+  const { data } = await http.post(`/fontes/${fonteId}/${ativa ? 'ativar' : 'desativar'}`)
+  return data
+}
+
+/**
  * Já implementado como exemplo do padrão que os TODOs acima seguem.
  * Use como referência quando travar.
  */

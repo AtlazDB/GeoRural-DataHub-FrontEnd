@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import BaseChave from '@/components/BaseChave.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import BaseModal from '@/components/BaseModal.vue'
 import IndicadorForm from '@/components/indicadores/IndicadorForm.vue'
@@ -11,6 +12,7 @@ import {
   buscarPorMunicipio,
   cadastrarIndicador,
   calcularIndicador,
+  ativarIndicador,
   desativarIndicador,
   listarIndicadores,
   listarUltimosCalculos,
@@ -30,12 +32,11 @@ const indicadores = ref([])
 const carregando = ref(true)
 const erro = ref('')
 
-// Aviso depois de desativar: { tipo: 'sucesso' | 'erro', texto }
+// Aviso depois de cadastrar, ativar ou desativar: { tipo: 'sucesso' | 'erro', texto }
 const aviso = ref(null)
 
-// Indicador esperando a confirmação no modal (null = modal fechado).
-const paraDesativar = ref(null)
-const desativando = ref(false)
+// Sigla do indicador com a chave de ativar sendo trocada (desliga a chave enquanto isso).
+const alternandoCode = ref(null)
 
 // Cadastro: fontes para o formulário e para mostrar o nome da fonte na lista.
 const fontes = ref([])
@@ -82,6 +83,50 @@ const ordenados = computed(() =>
     (a, b) => Number(b.active) - Number(a.active) || a.code.localeCompare(b.code),
   ),
 )
+
+// --- Filtros da lista: sigla ou nome, fonte e situação -----------------
+const busca = ref('')
+const fonteFiltro = ref('') // '' = todas as fontes
+const situacao = ref('todos') // todos | ativos | inativos
+
+const SITUACOES = [
+  { valor: 'todos', rotulo: 'Todos' },
+  { valor: 'ativos', rotulo: 'Ativos' },
+  { valor: 'inativos', rotulo: 'Inativos' },
+]
+
+function daSituacao(ind, valor) {
+  return valor === 'todos' || (valor === 'ativos') === ind.active
+}
+
+function contarSituacao(valor) {
+  return indicadores.value.filter((i) => daSituacao(i, valor)).length
+}
+
+// Só as fontes que algum indicador usa, pela sigla.
+const fontesDosIndicadores = computed(() =>
+  [...new Set(indicadores.value.map((i) => i.fonteId))]
+    .map((id) => ({ id, sigla: nomeDaFonte.value[id] ?? `#${id}` }))
+    .sort((a, b) => a.sigla.localeCompare(b.sigla)),
+)
+
+const filtrando = computed(() => !!busca.value.trim() || fonteFiltro.value !== '' || situacao.value !== 'todos')
+
+const filtrados = computed(() => {
+  const termo = busca.value.trim().toLowerCase()
+  return ordenados.value.filter(
+    (ind) =>
+      (!termo || `${ind.code} ${ind.name}`.toLowerCase().includes(termo)) &&
+      (fonteFiltro.value === '' || ind.fonteId === Number(fonteFiltro.value)) &&
+      daSituacao(ind, situacao.value),
+  )
+})
+
+function limparFiltros() {
+  busca.value = ''
+  fonteFiltro.value = ''
+  situacao.value = 'todos'
+}
 
 async function carregar() {
   carregando.value = true
@@ -208,19 +253,25 @@ async function abrirPorMunicipio(indicador) {
   }
 }
 
-async function confirmarDesativacao() {
-  const indicador = paraDesativar.value
-  desativando.value = true
+/**
+ * Chave da coluna Status: liga ou desliga o indicador. Desativado, ele não é mais calculado,
+ * mas não é apagado: os resultados já calculados continuam aparecendo. Dá para religar.
+ */
+async function alternarAtivo(indicador) {
+  const ativar = !indicador.active
+  alternandoCode.value = indicador.code
   try {
-    await desativarIndicador(indicador.code)
+    await (ativar ? ativarIndicador(indicador.code) : desativarIndicador(indicador.code))
     // O back responde 204 sem corpo: marca aqui em vez de recarregar a lista toda.
-    indicador.active = false
-    aviso.value = { tipo: 'sucesso', texto: `O indicador ${indicador.code} foi desativado.` }
+    indicador.active = ativar
+    aviso.value = {
+      tipo: 'sucesso',
+      texto: `O indicador ${indicador.code} foi ${ativar ? 'ativado' : 'desativado'}.`,
+    }
   } catch (e) {
     aviso.value = { tipo: 'erro', texto: e.message }
   } finally {
-    desativando.value = false
-    paraDesativar.value = null
+    alternandoCode.value = null
   }
 }
 
@@ -280,116 +331,171 @@ onMounted(() => {
         <p class="text-sm text-slate-400">Nenhum indicador cadastrado ainda.</p>
       </div>
 
-      <!-- Lista -->
-      <div v-else class="overflow-x-auto">
-        <table class="w-full text-left text-sm">
-          <thead class="text-[11px] uppercase tracking-wide text-slate-500">
-            <tr class="border-b border-slate-800">
-              <th class="py-2 pr-4 font-semibold">Sigla</th>
-              <th class="py-2 pr-4 font-semibold">Nome</th>
-              <th class="py-2 pr-4 font-semibold">Modelo</th>
-              <th class="py-2 pr-4 font-semibold">Unidade</th>
-              <th class="py-2 pr-4 font-semibold">Fonte</th>
-              <th class="py-2 pr-4 font-semibold">Cadastrado em</th>
-              <th class="py-2 pr-4 font-semibold">Situação</th>
-              <th class="py-2"><span class="sr-only">Ações</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="ind in ordenados"
-              :key="ind.code"
-              :class="['border-b border-slate-800/60', !ind.active && 'opacity-60']"
+      <!-- Filtros + lista -->
+      <div v-else class="space-y-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <input
+            v-model="busca"
+            type="search"
+            class="input max-w-xs"
+            placeholder="Buscar por sigla ou nome"
+            aria-label="Buscar indicador por sigla ou nome"
+          />
+          <select v-model="fonteFiltro" class="input w-auto" aria-label="Filtrar por fonte">
+            <option value="">Todas as fontes</option>
+            <option v-for="f in fontesDosIndicadores" :key="f.id" :value="f.id">{{ f.sigla }}</option>
+          </select>
+          <div class="flex gap-1 rounded-xl border border-slate-800 bg-slate-950/40 p-1" role="tablist" aria-label="Situação">
+            <button
+              v-for="s in SITUACOES"
+              :key="s.valor"
+              type="button"
+              role="tab"
+              :aria-selected="situacao === s.valor"
+              :class="[
+                'rounded-lg px-3 py-1.5 text-[12.5px] font-medium transition',
+                situacao === s.valor ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200',
+              ]"
+              @click="situacao = s.valor"
             >
-              <td class="py-3 pr-4 font-mono font-semibold text-cyan-300">{{ ind.code }}</td>
-              <td class="py-3 pr-4 text-slate-100">
-                {{ ind.name }}
-                <p v-if="ind.description" class="text-xs text-slate-500">{{ ind.description }}</p>
-              </td>
-              <td class="py-3 pr-4 text-slate-300">{{ MODELOS[ind.calculationModel] ?? ind.calculationModel }}</td>
-              <td class="py-3 pr-4 font-mono text-slate-300">{{ ind.unit }}</td>
-              <td class="py-3 pr-4 font-mono text-slate-400">{{ nomeDaFonte[ind.fonteId] ?? `#${ind.fonteId}` }}</td>
-              <td class="py-3 pr-4 text-slate-400 tabular-nums">{{ formatarDataHora(ind.createdAt) }}</td>
-              <td class="py-3 pr-4">
-                <span
-                  :class="[
-                    'inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                    ind.active
-                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                      : 'border-slate-500/40 bg-slate-500/10 text-slate-400',
-                  ]"
-                >
-                  {{ ind.active ? 'Ativo' : 'Inativo' }}
-                </span>
-              </td>
-              <td class="py-3 text-right">
-                <div class="flex items-center justify-end gap-2">
-                  <!-- Todos os perfis veem (é leitura). Inativo também: os resultados já calculados continuam valendo. -->
-                  <BaseButton variante="fantasma" tamanho="sm" @click="abrirPorMunicipio(ind)">
-                    Por município
-                  </BaseButton>
+              {{ s.rotulo }} <span class="text-slate-500">{{ contarSituacao(s.valor) }}</span>
+            </button>
+          </div>
+          <button
+            v-if="filtrando"
+            type="button"
+            class="text-xs text-cyan-300 underline underline-offset-2 hover:text-cyan-200"
+            @click="limparFiltros"
+          >
+            Limpar filtros
+          </button>
+        </div>
 
-                  <!-- Barra do cálculo em andamento (US13.T18): todos os perfis veem; ocupa o lugar do Calcular. -->
-                  <div v-if="progressoDe(ind)" class="w-44 space-y-1 text-left">
-                    <div class="flex items-center justify-between gap-2 text-[11px]">
-                      <span class="truncate text-slate-400">{{ progressoDe(ind).texto }}</span>
-                      <span v-if="progressoDe(ind).pct != null" class="font-mono text-cyan-400">
-                        {{ progressoDe(ind).pct }}%
-                      </span>
-                    </div>
-                    <div
-                      class="h-1.5 overflow-hidden rounded-full bg-slate-800"
-                      role="progressbar"
-                      aria-valuemin="0"
-                      aria-valuemax="100"
-                      :aria-valuenow="progressoDe(ind).pct ?? undefined"
-                      :aria-label="`Cálculo de ${ind.code}`"
-                    >
+        <p v-if="!filtrados.length" class="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">
+          Nenhum indicador com esse filtro.
+        </p>
+
+        <!-- Lista -->
+        <div v-else class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="text-[11px] uppercase tracking-wide text-slate-500">
+              <tr class="border-b border-slate-800">
+                <th class="py-2 pr-4 font-semibold">Sigla</th>
+                <th class="py-2 pr-4 font-semibold">Nome</th>
+                <th class="py-2 pr-4 font-semibold">Modelo</th>
+                <th class="py-2 pr-4 font-semibold">Unidade</th>
+                <th class="py-2 pr-4 font-semibold">Fonte</th>
+                <th class="py-2 pr-4 font-semibold">Cadastrado em</th>
+                <th class="py-2 pr-4 font-semibold">Situação</th>
+                <th class="py-2"><span class="sr-only">Ações</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="ind in filtrados"
+                :key="ind.code"
+                :class="['border-b border-slate-800/60', !ind.active && 'opacity-60']"
+              >
+                <td class="py-3 pr-4 font-mono font-semibold text-cyan-300">{{ ind.code }}</td>
+                <td class="py-3 pr-4 text-slate-100">
+                  {{ ind.name }}
+                  <p v-if="ind.description" class="text-xs text-slate-500">{{ ind.description }}</p>
+                </td>
+                <td class="py-3 pr-4 text-slate-300">{{ MODELOS[ind.calculationModel] ?? ind.calculationModel }}</td>
+                <td class="py-3 pr-4 font-mono text-slate-300">{{ ind.unit }}</td>
+                <td class="py-3 pr-4 font-mono text-slate-400">{{ nomeDaFonte[ind.fonteId] ?? `#${ind.fonteId}` }}</td>
+                <td class="py-3 pr-4 text-slate-400 tabular-nums">{{ formatarDataHora(ind.createdAt) }}</td>
+                <td class="py-3 pr-4">
+                  <!-- Quem opera troca pela chave; os outros perfis só veem a etiqueta. -->
+                  <div v-if="podeOperar" class="flex items-center gap-2">
+                    <BaseChave
+                      :ligada="ind.active"
+                      :rotulo="`o indicador ${ind.code}`"
+                      :ocupada="alternandoCode === ind.code"
+                      @alternar="alternarAtivo(ind)"
+                    />
+                    <span :class="['text-[11px]', ind.active ? 'text-cyan-300' : 'text-slate-400']">
+                      {{ ind.active ? 'Ativo' : 'Inativo' }}
+                    </span>
+                  </div>
+                  <span
+                    v-else
+                    :class="[
+                      'inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                      ind.active
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                        : 'border-slate-500/40 bg-slate-500/10 text-slate-400',
+                    ]"
+                  >
+                    {{ ind.active ? 'Ativo' : 'Inativo' }}
+                  </span>
+                </td>
+                <td class="py-3 text-right">
+                  <div class="flex items-center justify-end gap-2">
+                    <!-- Todos os perfis veem (é leitura). Inativo também: os resultados já calculados continuam valendo. -->
+                    <BaseButton variante="fantasma" tamanho="sm" @click="abrirPorMunicipio(ind)">
+                      Por município
+                    </BaseButton>
+
+                    <!-- Barra do cálculo em andamento (US13.T18): todos os perfis veem; ocupa o lugar do Calcular. -->
+                    <div v-if="progressoDe(ind)" class="w-44 space-y-1 text-left">
+                      <div class="flex items-center justify-between gap-2 text-[11px]">
+                        <span class="truncate text-slate-400">{{ progressoDe(ind).texto }}</span>
+                        <span v-if="progressoDe(ind).pct != null" class="font-mono text-cyan-400">
+                          {{ progressoDe(ind).pct }}%
+                        </span>
+                      </div>
                       <div
-                        v-if="progressoDe(ind).pct != null"
-                        class="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-[width] duration-700 ease-out"
-                        :style="{ width: progressoDe(ind).pct + '%' }"
-                      />
-                      <div v-else class="h-full w-full animate-pulse rounded-full bg-cyan-500/30" />
+                        class="h-1.5 overflow-hidden rounded-full bg-slate-800"
+                        role="progressbar"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        :aria-valuenow="progressoDe(ind).pct ?? undefined"
+                        :aria-label="`Cálculo de ${ind.code}`"
+                      >
+                        <div
+                          v-if="progressoDe(ind).pct != null"
+                          class="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-[width] duration-700 ease-out"
+                          :style="{ width: progressoDe(ind).pct + '%' }"
+                        />
+                        <div v-else class="h-full w-full animate-pulse rounded-full bg-cyan-500/30" />
+                      </div>
                     </div>
+
+                    <!-- Calcular: só quem opera (T25), e só em indicador ativo. Desativar é pela chave do Status. -->
+                    <template v-if="ind.active && podeOperar">
+                      <BaseButton
+                        v-if="!progressoDe(ind)"
+                        variante="secundario"
+                        tamanho="sm"
+                        :carregando="calculandoCode === ind.code"
+                        :disabled="!!calculandoCode"
+                        @click="calcular(ind)"
+                      >
+                        Calcular
+                      </BaseButton>
+                    </template>
                   </div>
 
-                  <!-- Calcular e desativar: só quem opera (T25), e só em indicador ativo. -->
-                  <template v-if="ind.active && podeOperar">
-                    <BaseButton
-                      v-if="!progressoDe(ind)"
-                      variante="secundario"
-                      tamanho="sm"
-                      :carregando="calculandoCode === ind.code"
-                      :disabled="!!calculandoCode"
-                      @click="calcular(ind)"
-                    >
-                      Calcular
-                    </BaseButton>
-                    <BaseButton variante="fantasma" tamanho="sm" @click="paraDesativar = ind">
-                      Desativar
-                    </BaseButton>
-                  </template>
-                </div>
-
-                <!-- O último cálculo terminado: quando foi, ou que falhou (a mensagem no title). -->
-                <p
-                  v-if="ultimoCalculo(ind)?.status === 'CONCLUIDO'"
-                  class="mt-1 text-[11px] text-slate-500 tabular-nums"
-                >
-                  Calculado em {{ formatarDataHora(ultimoCalculo(ind).finishedAt) }}
-                </p>
-                <p
-                  v-else-if="ultimoCalculo(ind)?.status === 'ERRO'"
-                  class="mt-1 text-[11px] text-rose-400"
-                  :title="ultimoCalculo(ind).errorMessage ?? ''"
-                >
-                  O último cálculo falhou
-                </p>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                  <!-- O último cálculo terminado: quando foi, ou que falhou (a mensagem no title). -->
+                  <p
+                    v-if="ultimoCalculo(ind)?.status === 'CONCLUIDO'"
+                    class="mt-1 text-[11px] text-slate-500 tabular-nums"
+                  >
+                    Calculado em {{ formatarDataHora(ultimoCalculo(ind).finishedAt) }}
+                  </p>
+                  <p
+                    v-else-if="ultimoCalculo(ind)?.status === 'ERRO'"
+                    class="mt-1 text-[11px] text-rose-400"
+                    :title="ultimoCalculo(ind).errorMessage ?? ''"
+                  >
+                    O último cálculo falhou
+                  </p>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </BaseCard>
 
@@ -471,29 +577,6 @@ onMounted(() => {
             <p v-if="!linhasMunicipio.length" class="py-4 text-center text-sm text-slate-500">Nenhum município com esse nome.</p>
           </div>
         </template>
-      </template>
-    </BaseModal>
-
-    <BaseModal
-      :aberto="!!paraDesativar"
-      titulo="Desativar indicador"
-      largura="max-w-md"
-      @fechar="paraDesativar = null"
-    >
-      <p v-if="paraDesativar" class="text-sm text-slate-300">
-        Desativar <span class="font-mono font-semibold text-cyan-300">{{ paraDesativar.code }}</span>
-        ({{ paraDesativar.name }})?
-      </p>
-      <p class="mt-2 text-sm text-slate-400">
-        Ele deixa de ser calculado, mas não é apagado: os resultados já calculados continuam
-        aparecendo. Não dá para reativar, e a sigla não pode ser usada de novo.
-      </p>
-
-      <template #rodape>
-        <BaseButton variante="fantasma" :disabled="desativando" @click="paraDesativar = null">
-          Cancelar
-        </BaseButton>
-        <BaseButton :carregando="desativando" @click="confirmarDesativacao">Desativar</BaseButton>
       </template>
     </BaseModal>
   </div>

@@ -24,6 +24,52 @@ export async function salvarPerfis(id, perfis) {
   const { data } = await http.put(`/usuarios/${id}/perfis`, { perfis })
   return data
 }
+
+/**
+ * Liga ou desliga o acesso do usuário (enabled no Keycloak). Devolve o usuário atualizado.
+ *   POST /usuarios/:id/ativar · POST /usuarios/:id/desativar
+ *   409 → o gestor tentou desativar a si mesmo
+ */
+export async function alterarAtivoUsuario(id, ativo) {
+  const { data } = await http.post(`/usuarios/${id}/${ativo ? 'ativar' : 'desativar'}`)
+  return data
+}
+
+/**
+ * Perfis que podem ser atribuídos: os 4 do sistema e os combinados criados pelo gestor.
+ *   GET /usuarios/perfis → [ { codigo, descricao, doSistema, inclui: ['ANALISTA', ...] } ]
+ */
+export async function listarPerfis() {
+  const { data } = await http.get('/usuarios/perfis')
+  return data
+}
+
+/**
+ * Cria um perfil combinado (role composta no Keycloak).
+ *   POST /usuarios/perfis { nome, descricao, inclui }  201 → o perfil · 400 · 409 (nome repetido)
+ */
+export async function criarPerfil(perfil) {
+  const { data } = await http.post('/usuarios/perfis', perfil)
+  return data
+}
+
+/**
+ * Muda a descrição de um perfil combinado (os 4 do sistema não mudam).
+ *   PUT /usuarios/perfis/:codigo { descricao }  200 → o perfil · 400 · 409 (perfil do sistema)
+ */
+export async function editarDescricaoPerfil(codigo, descricao) {
+  const { data } = await http.put(`/usuarios/perfis/${encodeURIComponent(codigo)}`, { descricao })
+  return data
+}
+
+/**
+ * Redefine a senha (perda ou esquecimento). É provisória: a pessoa troca no próximo login.
+ *   POST /usuarios/:id/senha { senhaProvisoria }  204 · 400 (senha recusada) · 404
+ */
+export async function redefinirSenha(id, senhaProvisoria) {
+  await http.post(`/usuarios/${id}/senha`, { senhaProvisoria })
+}
+
 /** Cria o usuário no Keycloak com perfis e cidades. A senha é provisória (troca no primeiro login). */
 export async function criarUsuario(usuario) {
   const { data } = await http.post('/usuarios', usuario)

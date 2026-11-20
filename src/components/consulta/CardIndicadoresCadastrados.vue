@@ -80,6 +80,18 @@ function atualizar() {
   carregar()
 }
 
+/**
+ * Saldo em hectares quando o indicador tem mínimo exigido (parameters.minimumPercent, ex.: IRL):
+ * área coberta − mínimo % × área do imóvel. Negativo = déficit (falta), positivo = excedente (sobra).
+ * null quando o indicador não tem mínimo ou o resultado não trouxe as áreas.
+ */
+function saldo(indicador, resultado) {
+  const minimo = Number(indicador.parameters?.minimumPercent)
+  if (!minimo || resultado?.numerator == null || resultado?.areaImovelHa == null) return null
+  const exigido = (Number(resultado.areaImovelHa) * minimo) / 100
+  return { minimo, exigido, valor: Number(resultado.numerator) - exigido }
+}
+
 function cores(status) {
   return CORES_STATUS[status] ?? CORES_STATUS.VALIDACAO
 }
@@ -141,6 +153,19 @@ function cores(status) {
           <p :class="['mt-1 font-display text-xl font-semibold tabular-nums', cores(resultado.status).texto]">
             {{ formatarDecimal(resultado.value, 2) }}
             <span class="text-xs font-normal text-slate-500">{{ indicador.unit }}</span>
+          </p>
+          <!-- Déficit ou excedente em hectares (só com mínimo exigido, ex.: IRL) -->
+          <p
+            v-if="saldo(indicador, resultado)"
+            :class="['text-[11.5px]', saldo(indicador, resultado).valor < 0 ? 'text-rose-300' : 'text-emerald-300']"
+          >
+            {{ saldo(indicador, resultado).valor < 0 ? 'Déficit' : 'Excedente' }} de
+            <span class="font-semibold tabular-nums">{{ formatarDecimal(Math.abs(saldo(indicador, resultado).valor), 2) }} ha</span>
+            <span class="text-slate-500">
+              (mínimo {{ formatarDecimal(saldo(indicador, resultado).minimo, 0) }}% =
+              {{ formatarDecimal(saldo(indicador, resultado).exigido, 2) }} ha; tem
+              {{ formatarDecimal(resultado.numerator, 2) }} ha)
+            </span>
           </p>
           <p class="text-[10.5px] text-slate-500">calculado em {{ formatarDataHora(resultado.calculatedAt) }}</p>
         </template>

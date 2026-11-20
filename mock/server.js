@@ -13,11 +13,14 @@
  *   GET    /fontes/:id              detalhe de uma fonte
  *   POST   /fontes                  cadastra uma fonte
  *   POST   /fontes/:id/arquivos     envia um arquivo (multipart, campo "arquivo")
+ *   POST   /fontes/:id/ativar       liga a fonte de novo
+ *   POST   /fontes/:id/desativar    desliga a fonte (não recebe arquivo nem coleta)
  *   DELETE /fontes/:id              remove uma fonte
  *   GET    /indicators              lista os indicadores cadastrados
  *   GET    /indicators/:code        detalhe de um indicador
  *   POST   /indicators              cadastra um indicador
  *   POST   /indicators/:code/deactivate   desativa (não apaga)
+ *   POST   /indicators/:code/activate     liga de novo
  *   POST   /indicators/:code/calculate    dispara o cálculo (progresso simulado, ~33 s)
  *   GET    /indicators/calculations/latest   o último cálculo de cada indicador
  */
@@ -250,6 +253,9 @@ app.post('/fontes', comLatencia, (req, res) => {
 app.post('/fontes/:id/arquivos', upload.single('arquivo'), (req, res) => {
   const fonte = acharFonte(req.params.id)
   if (!fonte) return res.status(404).json({ mensagem: 'Fonte não encontrada.' })
+  if (fonte.status === 'inativa') {
+    return res.status(400).json({ mensagem: `A fonte ${fonte.sigla} está desativada: ative a fonte para enviar arquivos.` })
+  }
   if (!req.file) return res.status(400).json({ mensagem: 'Nenhum arquivo enviado.' })
 
   const extensoesAceitas = ['.csv', '.zip', '.geojson', '.json', '.shp', '.xlsx', '.txt']
@@ -274,6 +280,16 @@ app.post('/fontes/:id/arquivos', upload.single('arquivo'), (req, res) => {
 
   res.status(201).json({ fonte, arquivo })
 })
+
+// Ativar / desativar: como no back, o status vira 'inativa'; ao religar, volta a depender dos arquivos.
+for (const acao of ['ativar', 'desativar']) {
+  app.post(`/fontes/:id/${acao}`, comLatencia, (req, res) => {
+    const fonte = acharFonte(req.params.id)
+    if (!fonte) return res.status(404).json({ mensagem: 'Fonte não encontrada.' })
+    fonte.status = acao === 'desativar' ? 'inativa' : fonte.arquivos.length ? 'ativa' : 'pendente'
+    res.json(fonte)
+  })
+}
 
 app.delete('/fontes/:id', comLatencia, (req, res) => {
   const i = fontes.findIndex((f) => f.id === Number(req.params.id))
@@ -447,6 +463,13 @@ app.post('/indicators/:code/deactivate', comLatencia, (req, res) => {
   const indicador = acharIndicador(req.params.code)
   if (!indicador) return res.status(404).json({ mensagem: `Indicador "${req.params.code}" não encontrado.` })
   indicador.active = false
+  res.status(204).end()
+})
+
+app.post('/indicators/:code/activate', comLatencia, (req, res) => {
+  const indicador = acharIndicador(req.params.code)
+  if (!indicador) return res.status(404).json({ mensagem: `Indicador "${req.params.code}" não encontrado.` })
+  indicador.active = true
   res.status(204).end()
 })
 

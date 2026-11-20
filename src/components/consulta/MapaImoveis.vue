@@ -52,14 +52,15 @@ const { claro } = useTema()
 // A máscara tem a cor do fundo da aplicação: fora do PR o mapa "some".
 function paleta(temaClaro) {
   const c = temaClaro
-    ? { linha: '#0891b2', destaque: '#0f172a', municipio: '#475569', estado: '#94a3b8', fundo: '#eef2f6' }
-    : { linha: '#22d3ee', destaque: '#f8fafc', municipio: '#cbd5e1', estado: '#64748b', fundo: '#0b0f19' }
+    ? { linha: '#0e7490', destaque: '#1e293b', municipio: '#334155', estado: '#334155', fundo: '#dce2e9' }
+    : { linha: '#22d3ee', destaque: '#f8fafc', municipio: '#e2e8f0', estado: '#94a3b8', fundo: '#0b0f19' }
   return {
     imovel: { color: c.linha, weight: 1, fillColor: '#22d3ee', fillOpacity: 0.15 },
     destaque: { color: c.destaque, weight: 2.5, fillColor: '#22d3ee', fillOpacity: 0.4 },
-    municipio: { color: c.municipio, weight: 2, dashArray: '6 4', fill: false },
-    estado: { color: c.estado, weight: 1.5, fill: false },
-    mascara: { stroke: false, fillColor: c.fundo, fillOpacity: 0.85 },
+    municipio: { color: c.municipio, weight: 2.5, dashArray: '6 4', fill: false },
+    // Contorno do PR forte e o resto do mapa quase apagado: o olho vai direto para o estado.
+    estado: { color: c.estado, weight: 2.5, fill: false },
+    mascara: { stroke: false, fillColor: c.fundo, fillOpacity: 0.94 },
     foco: { radius: 4, color: '#fb923c', weight: 1, fillColor: '#f97316', fillOpacity: 0.9 },
   }
 }

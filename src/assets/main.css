@@ -75,25 +75,27 @@
     --c-indigo-950: 30 27 75;
   }
 
+  /* Modo claro sem ofuscar: fundo e cartões em cinza-azulado (nada de branco puro) e
+     texto em grafite, não preto. Contraste do texto ainda passa do mínimo de leitura (4,5:1). */
   html.claro {
-    --c-base: 238 242 246;
-    --c-white: 15 23 42;
-    --c-slate-50: 2 6 23;
-    --c-slate-100: 15 23 42;
-    --c-slate-200: 30 41 59;
-    --c-slate-300: 51 65 85;
-    --c-slate-400: 71 85 105;
-    --c-slate-500: 100 116 139;
-    --c-slate-600: 148 163 184;
-    --c-slate-700: 203 213 225;
-    --c-slate-800: 226 232 240;
-    --c-slate-900: 255 255 255;
-    --c-slate-950: 248 250 252;
+    --c-base: 220 226 233;
+    --c-white: 30 41 59;
+    --c-slate-50: 22 30 46;
+    --c-slate-100: 30 41 59;
+    --c-slate-200: 41 53 72;
+    --c-slate-300: 55 68 88;
+    --c-slate-400: 74 87 107;
+    --c-slate-500: 92 105 124;
+    --c-slate-600: 140 153 172;
+    --c-slate-700: 190 199 212;
+    --c-slate-800: 205 213 223;
+    --c-slate-900: 238 241 245;
+    --c-slate-950: 229 234 240;
     --c-cyan-50: 22 78 99;
     --c-cyan-100: 22 78 99;
     --c-cyan-200: 21 94 117;
-    --c-cyan-300: 14 116 144;
-    --c-cyan-400: 8 145 178;
+    --c-cyan-300: 21 94 117;
+    --c-cyan-400: 14 116 144;
     --c-cyan-500: 6 182 212;
     --c-cyan-600: 8 145 178;
     --c-cyan-700: 14 116 144;
@@ -197,7 +199,7 @@
   }
 
   html.claro .glass {
-    background-color: rgb(255 255 255 / 0.78);
+    background-color: rgb(238 241 245 / 0.9);
     box-shadow:
       0 1px 2px rgb(15 23 42 / 0.05),
       0 8px 24px -12px rgb(15 23 42 / 0.1);
@@ -210,7 +212,7 @@
   }
 
   html.claro .glass-mapa {
-    background-color: rgb(255 255 255 / 0.92);
+    background-color: rgb(238 241 245 / 0.95);
     box-shadow: 0 8px 24px -10px rgb(15 23 42 / 0.25);
   }
 
@@ -222,8 +224,16 @@
     height: 100dvh;
   }
 
+  /* Botão principal no modo claro: o mesmo gradiente ciano → índigo, só que em tons mais
+     fechados e com texto branco. O claro e vibrante do modo escuro ofusca no fundo cinza. */
+  html.claro .botao-primario {
+    background-image: linear-gradient(to bottom right, rgb(14 116 144), rgb(67 56 202));
+    color: #fff;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.12), 0 4px 10px -4px rgb(14 116 144 / 0.35);
+  }
+
   html.claro .glow {
-    opacity: 0.55;
+    opacity: 0.3;
   }
 
   .label {
@@ -242,6 +252,12 @@
    sobrescrever o visual claro padrão dos controles e das dicas. */
 .leaflet-container {
   @apply bg-slate-950 font-sans;
+}
+
+/* Modo claro: o fundo cinza-claro da Esri é muito lavado; mais contraste deixa as linhas e
+   divisas dentro do Paraná (e os nomes das cidades) mais fortes. Fora do PR a máscara apaga. */
+html.claro .leaflet-tile-pane {
+  filter: contrast(1.25);
 }
 
 .leaflet-tooltip {
