@@ -6,6 +6,7 @@ import MapaImoveis from '@/components/consulta/MapaImoveis.vue'
 import TabelaImoveis from '@/components/consulta/TabelaImoveis.vue'
 import CardIndicadores from '@/components/consulta/CardIndicadores.vue'
 import CardIndicadoresCadastrados from '@/components/consulta/CardIndicadoresCadastrados.vue'
+import GraficosIndicadores from '@/components/consulta/GraficosIndicadores.vue'
 import ModalOrigem from '@/components/consulta/ModalOrigem.vue'
 import {
   listarPaginaImoveis,
@@ -718,6 +719,11 @@ onBeforeUnmount(() => {
               @origem="abrirOrigem"
             />
             <CardIndicadoresCadastrados :cod-imovel="selecionadoCod" />
+            <GraficosIndicadores
+              :resumo-indicadores="resumoIndicadores"
+              :indicadores-imovel="indicadores"
+              :cod-imovel="selecionadoCod"
+            />
           </div>
         </section>
       </div>
