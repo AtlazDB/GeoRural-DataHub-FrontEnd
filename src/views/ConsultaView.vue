@@ -16,6 +16,7 @@ import { listarMunicipios, buscarMunicipio } from '@/services/municipiosService'
 import { buscarMeuAcesso } from '@/services/acessoService'
 import { buscarFocosNoMapa } from '@/services/focosService'
 import { buscarIndicadores, calcularIndicadores } from '@/services/indicadoresService'
+import { listarIndicadores, buscarResultado } from '@/services/indicadoresCadastrosService'
 import { buscarOrigem, compararVersoes } from '@/services/versoesService'
 import { formatarNumero } from '@/utils/formato'
 
@@ -29,6 +30,12 @@ import { formatarNumero } from '@/utils/formato'
  */
 const UF = 'PR'
 const TAMANHO = 50
+const PRIORIDADE_STATUS = {
+  CRITICO: 4,
+  ALERTA: 3,
+  VALIDACAO: 2,
+  CONFORME: 1,
+}
 
 // --- Filtro -------------------------------------------------------
 const municipios = ref([])
@@ -47,6 +54,12 @@ const total = ref(0)
 const pagina = ref(1)
 const carregando = ref(false)
 const erro = ref('')
+
+// --- Indicadores da página (US11.T22, sob demanda) --------------
+const resumoIndicadores = ref({})
+const carregandoIndicadoresPagina = ref(false)
+const avisoIndicadoresPagina = ref('')
+let pedidoIndicadoresPagina = 0
 
 // --- Mapa ---------------------------------------------------------
 const mapaRef = ref(null)
@@ -220,6 +233,10 @@ async function carregarMunicipios() {
  */
 async function carregarPagina() {
   const consulta = ++consultaAtual
+  ++pedidoIndicadoresPagina
+  resumoIndicadores.value = {}
+  avisoIndicadoresPagina.value = ''
+  carregandoIndicadoresPagina.value = false
   carregando.value = true
   erro.value = ''
   try {
@@ -237,6 +254,65 @@ async function carregarPagina() {
     if (consulta === consultaAtual) erro.value = e.message
   } finally {
     if (consulta === consultaAtual) carregando.value = false
+  }
+}
+
+function consolidarStatus(resultados) {
+  let piorStatus = null
+  let maiorPrioridade = 0
+  let calculados = 0
+
+  for (const item of resultados) {
+    if (!item?.status) continue
+    calculados += 1
+    const prioridade = PRIORIDADE_STATUS[item.status] ?? 0
+    if (prioridade > maiorPrioridade) {
+      maiorPrioridade = prioridade
+      piorStatus = item.status
+    }
+  }
+
+  return {
+    status: piorStatus,
+    quantidade: resultados.length,
+    calculados,
+  }
+}
+
+async function carregarIndicadoresPagina() {
+  if (!itens.value.length) return
+  const pedido = ++pedidoIndicadoresPagina
+  carregandoIndicadoresPagina.value = true
+  avisoIndicadoresPagina.value = ''
+
+  try {
+    const ativos = (await listarIndicadores()).filter((i) => i.active)
+    if (pedido !== pedidoIndicadoresPagina) return
+
+    if (!ativos.length) {
+      resumoIndicadores.value = {}
+      avisoIndicadoresPagina.value = 'Nenhum indicador cadastrado ativo.'
+      return
+    }
+
+    const resultadosPorImovel = await Promise.all(
+      itens.value.map(async (imovel) => {
+        const res = await Promise.all(
+          ativos.map((indicador) => buscarResultado(indicador.code, imovel.codImovel)),
+        )
+        return [imovel.codImovel, consolidarStatus(res)]
+      }),
+    )
+
+    if (pedido !== pedidoIndicadoresPagina) return
+    resumoIndicadores.value = Object.fromEntries(resultadosPorImovel)
+    avisoIndicadoresPagina.value = `${ativos.length} indicador(es) consultado(s) na página.`
+  } catch (e) {
+    if (pedido === pedidoIndicadoresPagina) {
+      avisoIndicadoresPagina.value = e.message || 'Não deu para carregar os indicadores.'
+    }
+  } finally {
+    if (pedido === pedidoIndicadoresPagina) carregandoIndicadoresPagina.value = false
   }
 }
 
@@ -529,8 +605,6 @@ onBeforeUnmount(() => {
 
     <!-- Painel: arrastável pelo mapa (lg+) ou gaveta embaixo (celular).
          Na tela larga, left/top vêm de estiloPainel. -->
-    <!-- Painel: um bloco só (barra + seções), arrastável pelo mapa (lg+) ou gaveta embaixo
-         (celular). Na tela larga, left/top vêm de estiloPainel. -->
     <aside
       ref="painelRef"
       :class="[
@@ -599,9 +673,13 @@ onBeforeUnmount(() => {
             :carregando="carregando"
             :erro="erro"
             :selecionado-cod="selecionadoCod"
+            :resumo-indicadores="resumoIndicadores"
+            :carregando-indicadores="carregandoIndicadoresPagina"
+            :aviso-indicadores="avisoIndicadoresPagina"
             @selecionar="selecionarDaTabela"
             @mudar-pagina="mudarPagina"
             @tentar-novamente="carregarPagina"
+            @carregar-indicadores="carregarIndicadoresPagina"
           />
         </section>
 
