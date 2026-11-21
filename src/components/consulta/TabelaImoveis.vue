@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import { formatarArea, formatarNumero, formatarSituacao } from '@/utils/formato'
+import { CORES_STATUS } from '@/utils/indicadores'
 
 /**
  * Uma página da tabela de imóveis. Mesmo padrão da FonteList: estados de
@@ -17,9 +18,20 @@ const props = defineProps({
   carregando: { type: Boolean, default: false },
   erro: { type: String, default: '' },
   selecionadoCod: { type: String, default: null },
+  /** Mapa { [codImovel]: { status, quantidade, calculados } } carregado sob demanda */
+  resumoIndicadores: { type: Object, default: () => ({}) },
+  carregandoIndicadores: { type: Boolean, default: false },
+  avisoIndicadores: { type: String, default: '' },
 })
 
-defineEmits(['selecionar', 'mudar-pagina', 'tentar-novamente'])
+defineEmits(['selecionar', 'mudar-pagina', 'tentar-novamente', 'carregar-indicadores'])
+
+const ROTULO_STATUS = {
+  CONFORME: 'Conforme',
+  ALERTA: 'Alerta',
+  CRITICO: 'Crítico',
+  VALIDACAO: 'Em validação',
+}
 
 const totalPaginas = computed(() => Math.max(1, Math.ceil(props.total / props.tamanho)))
 const primeiro = computed(() => (props.pagina - 1) * props.tamanho + 1)
@@ -32,6 +44,10 @@ const ultimo = computed(() => Math.min(props.pagina * props.tamanho, props.total
 function codigoCurto(codigo) {
   if (!codigo || codigo.length <= 22) return codigo
   return `${codigo.slice(0, 15)}…${codigo.slice(-4)}`
+}
+
+function estiloStatus(status) {
+  return CORES_STATUS[status] ?? CORES_STATUS.VALIDACAO
 }
 </script>
 
@@ -67,6 +83,23 @@ function codigoCurto(codigo) {
 
   <!-- Estado 4: a tabela -->
   <div v-else :class="['transition-opacity', carregando && 'opacity-50']">
+    <div class="mb-2 flex items-center justify-between gap-2">
+      <p class="min-w-0 truncate text-[11px] text-slate-400">
+        {{ avisoIndicadores }}
+      </p>
+      <BaseButton
+        variante="fantasma"
+        tamanho="sm"
+        class="shrink-0"
+        :carregando="carregandoIndicadores"
+        :disabled="carregando || carregandoIndicadores"
+        @click="$emit('carregar-indicadores')"
+      >
+        <AppIcon nome="atualizar" traco="2.2" class="mr-1 h-3 w-3" />
+        Indicadores da página
+      </BaseButton>
+    </div>
+
     <!-- No celular a tabela fica dentro da gaveta, que já rola: mais baixa,
          para não ser uma rolagem grande dentro da outra. -->
     <div class="max-h-[40dvh] overflow-auto overscroll-contain rounded-xl border border-slate-800 lg:max-h-[440px]">
@@ -75,6 +108,7 @@ function codigoCurto(codigo) {
           <tr>
             <th class="px-3 py-2.5 font-semibold">Imóvel</th>
             <th class="px-3 py-2.5 font-semibold">Situação</th>
+            <th class="px-3 py-2.5 font-semibold">Indicadores</th>
             <th class="px-3 py-2.5 text-right font-semibold">Área</th>
           </tr>
         </thead>
@@ -100,6 +134,20 @@ function codigoCurto(codigo) {
               <span class="block text-[12px] text-slate-400">{{ imovel.municipio ?? '—' }}</span>
             </td>
             <td class="whitespace-nowrap px-3 py-2 text-[12.5px]">{{ formatarSituacao(imovel.situacao) }}</td>
+            <td class="whitespace-nowrap px-3 py-2 text-[12px]">
+              <template v-if="resumoIndicadores[imovel.codImovel]?.status">
+                <span
+                  :class="[
+                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                    estiloStatus(resumoIndicadores[imovel.codImovel].status).etiqueta,
+                  ]"
+                  :title="`${resumoIndicadores[imovel.codImovel].calculados}/${resumoIndicadores[imovel.codImovel].quantidade} calculado(s)`"
+                >
+                  {{ ROTULO_STATUS[resumoIndicadores[imovel.codImovel].status] ?? resumoIndicadores[imovel.codImovel].status }}
+                </span>
+              </template>
+              <span v-else class="text-slate-500">—</span>
+            </td>
             <td class="whitespace-nowrap px-3 py-2 text-right text-[12.5px] tabular-nums">{{ formatarArea(imovel.areaHa) }}</td>
           </tr>
         </tbody>

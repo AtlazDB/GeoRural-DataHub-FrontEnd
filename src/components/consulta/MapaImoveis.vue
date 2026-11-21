@@ -32,6 +32,8 @@ const props = defineProps({
   filtrado: { type: Boolean, default: false },
   /** FeatureCollection de GET /focos (os focos que o IFC conta), ou null */
   focos: { type: Object, default: null },
+  /** Mapa { [codImovel]: { status, quantidade, calculados } } carregado na consulta */
+  resumoIndicadores: { type: Object, default: () => ({}) },
   /**
    * Espaço (px) coberto pelos painéis flutuantes em cada lado do mapa:
    * { topo, direita, baixo, esquerda }. O enquadramento desconta essa folga
@@ -47,6 +49,13 @@ const ZOOM_PARANA = 7
 const ZOOM_MINIMO = 11 // abaixo disso a área visível tem imóveis demais
 const ZOOM_MAXIMO = 16 // o fundo da Esri não tem tiles além disso
 
+const ROTULO_STATUS = {
+  CONFORME: 'Conforme',
+  ALERTA: 'Alerta',
+  CRITICO: 'Crítico',
+  VALIDACAO: 'Em validação',
+}
+
 const { claro } = useTema()
 
 // A máscara tem a cor do fundo da aplicação: fora do PR o mapa "some".
@@ -56,6 +65,12 @@ function paleta(temaClaro) {
     : { linha: '#22d3ee', destaque: '#f8fafc', municipio: '#e2e8f0', estado: '#94a3b8', fundo: '#0b0f19' }
   return {
     imovel: { color: c.linha, weight: 1, fillColor: '#22d3ee', fillOpacity: 0.15 },
+    status: {
+      CONFORME: { color: '#10b981', weight: 1.5, fillColor: '#10b981', fillOpacity: 0.22 },
+      ALERTA: { color: '#f59e0b', weight: 1.5, fillColor: '#f59e0b', fillOpacity: 0.25 },
+      CRITICO: { color: '#f43f5e', weight: 1.8, fillColor: '#f43f5e', fillOpacity: 0.28 },
+      VALIDACAO: { color: '#94a3b8', weight: 1.4, fillColor: '#94a3b8', fillOpacity: 0.18 },
+    },
     destaque: { color: c.destaque, weight: 2.5, fillColor: '#22d3ee', fillOpacity: 0.4 },
     municipio: { color: c.municipio, weight: 2.5, dashArray: '6 4', fill: false },
     // Contorno do PR forte e o resto do mapa quase apagado: o olho vai direto para o estado.
@@ -66,6 +81,13 @@ function paleta(temaClaro) {
 }
 
 let estilo = paleta(claro.value)
+
+function estiloImovel(feature) {
+  const cod = feature?.properties?.codImovel
+  const status = cod ? props.resumoIndicadores?.[cod]?.status : null
+  if (status && estilo.status[status]) return estilo.status[status]
+  return estilo.imovel
+}
 
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas'
 const fundoEsri = (camada) =>
@@ -142,8 +164,8 @@ onMounted(() => {
 
   // Uma camada só para os imóveis, reaproveitada a cada movimento: troca-se
   // o conteúdo (clearLayers + addData), não a camada.
-  // style como função para os imóveis carregados depois de trocar o tema.
-  camadaImoveis = L.geoJSON(null, { style: () => estilo.imovel, onEachFeature: prepararImovel }).addTo(mapa)
+  // style como função para os imóveis refletirem tema e status dos indicadores.
+  camadaImoveis = L.geoJSON(null, { style: estiloImovel, onEachFeature: prepararImovel }).addTo(mapa)
   camadaDestaque = L.geoJSON(null, { style: () => estilo.destaque, interactive: false }).addTo(mapa)
   camadaFocos = L.geoJSON(null, {
     pointToLayer: (_feature, posicao) => L.circleMarker(posicao, estilo.foco),
@@ -172,12 +194,15 @@ watch(claro, (temaClaro) => {
   referencia.setUrl(fundoEsri('Reference'))
   mascara.setStyle(estilo.mascara)
   contornoEstado.setStyle(estilo.estado)
-  camadaImoveis.setStyle(estilo.imovel)
+  camadaImoveis.setStyle(estiloImovel)
   camadaDestaque.setStyle(estilo.destaque)
   camadaMunicipio?.setStyle(estilo.municipio)
 })
 
 watch(() => props.camada, desenharImoveis)
+watch(() => props.resumoIndicadores, () => {
+  camadaImoveis?.setStyle(estiloImovel)
+}, { deep: true })
 watch(() => props.destaque, desenharDestaque)
 watch(() => props.focos, desenharFocos)
 watch(
@@ -245,11 +270,17 @@ function prepararImovel(feature, poligono) {
 // vêm dos arquivos das fontes e não devem ser interpretados como marcação.
 function montarPopup(imovel) {
   const caixa = document.createElement('div')
+  const resumo = imovel?.codImovel ? props.resumoIndicadores?.[imovel.codImovel] : null
+  const statusTexto = resumo?.status
+    ? `${ROTULO_STATUS[resumo.status] ?? resumo.status} (${resumo.calculados}/${resumo.quantidade})`
+    : null
+
   const linhas = [
     ['Código', imovel.codImovel],
     ['Município', imovel.municipio ?? '—'],
     ['Área', formatarArea(imovel.areaHa)],
     ['Situação', formatarSituacao(imovel.situacao)],
+    ...(statusTexto ? [['Indicadores', statusTexto]] : []),
   ]
   for (const [rotulo, valor] of linhas) {
     const linha = document.createElement('div')

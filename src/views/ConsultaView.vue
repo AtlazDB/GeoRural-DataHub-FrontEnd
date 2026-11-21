@@ -6,6 +6,7 @@ import MapaImoveis from '@/components/consulta/MapaImoveis.vue'
 import TabelaImoveis from '@/components/consulta/TabelaImoveis.vue'
 import CardIndicadores from '@/components/consulta/CardIndicadores.vue'
 import CardIndicadoresCadastrados from '@/components/consulta/CardIndicadoresCadastrados.vue'
+import GraficosIndicadores from '@/components/consulta/GraficosIndicadores.vue'
 import ModalOrigem from '@/components/consulta/ModalOrigem.vue'
 import {
   listarPaginaImoveis,
@@ -16,6 +17,7 @@ import { listarMunicipios, buscarMunicipio } from '@/services/municipiosService'
 import { buscarMeuAcesso } from '@/services/acessoService'
 import { buscarFocosNoMapa } from '@/services/focosService'
 import { buscarIndicadores, calcularIndicadores } from '@/services/indicadoresService'
+import { listarIndicadores, buscarResultado } from '@/services/indicadoresCadastrosService'
 import { buscarOrigem, compararVersoes } from '@/services/versoesService'
 import { formatarNumero } from '@/utils/formato'
 
@@ -29,6 +31,12 @@ import { formatarNumero } from '@/utils/formato'
  */
 const UF = 'PR'
 const TAMANHO = 50
+const PRIORIDADE_STATUS = {
+  CRITICO: 4,
+  ALERTA: 3,
+  VALIDACAO: 2,
+  CONFORME: 1,
+}
 
 // --- Filtro -------------------------------------------------------
 const municipios = ref([])
@@ -47,6 +55,12 @@ const total = ref(0)
 const pagina = ref(1)
 const carregando = ref(false)
 const erro = ref('')
+
+// --- Indicadores da página (US11.T22, sob demanda) --------------
+const resumoIndicadores = ref({})
+const carregandoIndicadoresPagina = ref(false)
+const avisoIndicadoresPagina = ref('')
+let pedidoIndicadoresPagina = 0
 
 // --- Mapa ---------------------------------------------------------
 const mapaRef = ref(null)
@@ -187,6 +201,11 @@ const legendaFocos = computed(() => {
   return `Foco de calor · INPE ${f.satelite} · ${f.janelaMeses} meses`
 })
 
+/** Indica se algum imóvel carregado tem status ambiental classificado (para legenda). */
+const temStatusNoMapa = computed(() =>
+  Object.values(resumoIndicadores.value).some((r) => Boolean(r?.status)),
+)
+
 // Vai o nome do IBGE como está ("Maringá"): o back-end compara por igualdade,
 // sem diferenciar acento nem maiúsculas, com o "Maringa" que o CAR grava.
 // Vale para a tabela e para o mapa.
@@ -220,6 +239,10 @@ async function carregarMunicipios() {
  */
 async function carregarPagina() {
   const consulta = ++consultaAtual
+  ++pedidoIndicadoresPagina
+  resumoIndicadores.value = {}
+  avisoIndicadoresPagina.value = ''
+  carregandoIndicadoresPagina.value = false
   carregando.value = true
   erro.value = ''
   try {
@@ -237,6 +260,65 @@ async function carregarPagina() {
     if (consulta === consultaAtual) erro.value = e.message
   } finally {
     if (consulta === consultaAtual) carregando.value = false
+  }
+}
+
+function consolidarStatus(resultados) {
+  let piorStatus = null
+  let maiorPrioridade = 0
+  let calculados = 0
+
+  for (const item of resultados) {
+    if (!item?.status) continue
+    calculados += 1
+    const prioridade = PRIORIDADE_STATUS[item.status] ?? 0
+    if (prioridade > maiorPrioridade) {
+      maiorPrioridade = prioridade
+      piorStatus = item.status
+    }
+  }
+
+  return {
+    status: piorStatus,
+    quantidade: resultados.length,
+    calculados,
+  }
+}
+
+async function carregarIndicadoresPagina() {
+  if (!itens.value.length) return
+  const pedido = ++pedidoIndicadoresPagina
+  carregandoIndicadoresPagina.value = true
+  avisoIndicadoresPagina.value = ''
+
+  try {
+    const ativos = (await listarIndicadores()).filter((i) => i.active)
+    if (pedido !== pedidoIndicadoresPagina) return
+
+    if (!ativos.length) {
+      resumoIndicadores.value = {}
+      avisoIndicadoresPagina.value = 'Nenhum indicador cadastrado ativo.'
+      return
+    }
+
+    const resultadosPorImovel = await Promise.all(
+      itens.value.map(async (imovel) => {
+        const res = await Promise.all(
+          ativos.map((indicador) => buscarResultado(indicador.code, imovel.codImovel)),
+        )
+        return [imovel.codImovel, consolidarStatus(res)]
+      }),
+    )
+
+    if (pedido !== pedidoIndicadoresPagina) return
+    resumoIndicadores.value = Object.fromEntries(resultadosPorImovel)
+    avisoIndicadoresPagina.value = `${ativos.length} indicador(es) consultado(s) na página.`
+  } catch (e) {
+    if (pedido === pedidoIndicadoresPagina) {
+      avisoIndicadoresPagina.value = e.message || 'Não deu para carregar os indicadores.'
+    }
+  } finally {
+    if (pedido === pedidoIndicadoresPagina) carregandoIndicadoresPagina.value = false
   }
 }
 
@@ -497,6 +579,7 @@ onBeforeUnmount(() => {
       :destaque="destaque"
       :filtrado="!!nomeFiltro || !!situacao"
       :focos="focos"
+      :resumo-indicadores="resumoIndicadores"
       :folga="folga"
       @area="aoMoverMapa"
       @selecionar="selecionarDoMapa"
@@ -515,12 +598,26 @@ onBeforeUnmount(() => {
     <!-- Legenda: canto superior direito -->
     <div
       class="glass-mapa pointer-events-none absolute right-4 top-4 z-20 flex max-w-[calc(100%-2rem)] flex-col
-             gap-1 px-3 py-2 text-[11px] text-slate-400 sm:flex-row sm:gap-x-4"
+             gap-1 px-3 py-2 text-[11px] text-slate-400 sm:flex-row sm:flex-wrap sm:gap-x-4"
     >
       <span class="flex items-center gap-1.5">
         <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-cyan-400 bg-cyan-400/30" />
         Imóvel rural
       </span>
+      <template v-if="temStatusNoMapa">
+        <span class="flex items-center gap-1.5">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-emerald-500 bg-emerald-500/30" />
+          Conforme
+        </span>
+        <span class="flex items-center gap-1.5">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-amber-500 bg-amber-500/30" />
+          Alerta
+        </span>
+        <span class="flex items-center gap-1.5">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-rose-500 bg-rose-500/30" />
+          Crítico
+        </span>
+      </template>
       <span class="flex items-center gap-1.5">
         <span class="h-2.5 w-2.5 shrink-0 rounded-full bg-orange-500" />
         {{ legendaFocos }}
@@ -529,8 +626,6 @@ onBeforeUnmount(() => {
 
     <!-- Painel: arrastável pelo mapa (lg+) ou gaveta embaixo (celular).
          Na tela larga, left/top vêm de estiloPainel. -->
-    <!-- Painel: um bloco só (barra + seções), arrastável pelo mapa (lg+) ou gaveta embaixo
-         (celular). Na tela larga, left/top vêm de estiloPainel. -->
     <aside
       ref="painelRef"
       :class="[
@@ -599,9 +694,13 @@ onBeforeUnmount(() => {
             :carregando="carregando"
             :erro="erro"
             :selecionado-cod="selecionadoCod"
+            :resumo-indicadores="resumoIndicadores"
+            :carregando-indicadores="carregandoIndicadoresPagina"
+            :aviso-indicadores="avisoIndicadoresPagina"
             @selecionar="selecionarDaTabela"
             @mudar-pagina="mudarPagina"
             @tentar-novamente="carregarPagina"
+            @carregar-indicadores="carregarIndicadoresPagina"
           />
         </section>
 
@@ -620,6 +719,11 @@ onBeforeUnmount(() => {
               @origem="abrirOrigem"
             />
             <CardIndicadoresCadastrados :cod-imovel="selecionadoCod" />
+            <GraficosIndicadores
+              :resumo-indicadores="resumoIndicadores"
+              :indicadores-imovel="indicadores"
+              :cod-imovel="selecionadoCod"
+            />
           </div>
         </section>
       </div>
