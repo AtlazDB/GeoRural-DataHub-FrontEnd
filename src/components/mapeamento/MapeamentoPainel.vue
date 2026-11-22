@@ -176,8 +176,12 @@ async function remover(mapeamento) {
 
 // Recarrega toda vez que aparece (ou troca de fonte aparecendo), para nunca
 // mostrar dados de outra fonte. Esconder zera o formulário.
+// Duas fontes separadas, e não um getter que devolve [ativo, id]: o getter criava
+// um array novo a cada vez, e a ImportacaoView troca o objeto `fonte` a cada 3 s
+// enquanto há coleta ou processamento. O painel recarregava (piscando) e zerava
+// o formulário no meio do preenchimento. Assim só dispara quando ativo ou id mudam.
 watch(
-  () => [props.ativo, props.fonte?.id],
+  [() => props.ativo, () => props.fonte?.id],
   ([ativo]) => {
     emEdicao.value = null
     regraEmEdicao.value = null
