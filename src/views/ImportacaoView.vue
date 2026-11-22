@@ -2,10 +2,12 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BaseButton from '@/components/BaseButton.vue'
+import { useConfirmacao } from '@/composables/useConfirmacao'
 import BaseGaveta from '@/components/BaseGaveta.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import FonteList from '@/components/fontes/FonteList.vue'
+import GrupoFontesModal from '@/components/fontes/GrupoFontesModal.vue'
 import FonteForm from '@/components/fontes/FonteForm.vue'
 import FonteUpload from '@/components/fontes/FonteUpload.vue'
 import ArquivoList from '@/components/fontes/ArquivoList.vue'
@@ -21,6 +23,7 @@ import {
   testarLink,
   executarColeta,
   alterarAtivaFonte,
+  listarGrupos,
 } from '@/services/fontesService'
 import { processarArquivo, cancelarArquivo, excluirArquivo } from '@/services/arquivosService'
 import { listarVersoesDaFonte } from '@/services/versoesService'
@@ -45,6 +48,7 @@ import { usePermissoes } from '@/composables/usePermissoes'
  */
 
 const route = useRoute()
+const { confirmar } = useConfirmacao()
 const router = useRouter()
 const { podeOperar } = usePermissoes()
 
@@ -57,6 +61,7 @@ const busca = ref('')
 
 const filtros = [
   { valor: 'todas', rotulo: 'Todas' },
+  { valor: 'ATIVAS', rotulo: 'Ativas' },
   { valor: 'LINK', rotulo: 'Coleta automática' },
   { valor: 'MANUAL', rotulo: 'Upload' },
   { valor: 'INATIVAS', rotulo: 'Desativadas' },
@@ -64,6 +69,7 @@ const filtros = [
 
 function doFiltro(fonte, valor) {
   if (valor === 'INATIVAS') return fonte.status === 'inativa'
+  if (valor === 'ATIVAS') return fonte.status !== 'inativa'
   return valor === 'todas' || (valor === 'LINK') === (fonte.modalidade === 'LINK')
 }
 
@@ -233,6 +239,8 @@ async function carregar() {
   erro.value = ''
   try {
     fontes.value = await listarFontes()
+    // Grupos só organizam a tela: se falharem, a lista aparece sem pastas.
+    grupos.value = await listarGrupos().catch(() => [])
         recarregarNovas()
   } catch (e) {
     erro.value = e.message
@@ -255,6 +263,53 @@ async function carregar() {
  *   e) no catch, avisar('erro', e.message)
  */
 /** Abre o formulário vazio, para cadastrar uma fonte nova (ex.: camadas dos indicadores: UC, TI, PRODES). */
+// --- Grupos de fontes: "pastas" na lista (só organização visual) ----
+const grupos = ref([]) // [{ id, nome, fonteIds }]
+const gruposAbertos = ref([]) // ids das pastas abertas
+const modalGrupo = ref({ aberto: false, grupo: null })
+
+const gruposVisiveis = computed(() => {
+  const semFiltro = !busca.value.trim() && filtro.value === 'todas'
+  return grupos.value
+    .map((g) => {
+      const membros = fontesVisiveis.value.filter((f) => f.grupoId === g.id)
+      return {
+        ...g,
+        fontes: membros,
+        inativas: membros.filter((f) => f.status === 'inativa').length,
+        aguardando: membros.filter((f) => f.arquivos?.some((a) => a.status === 'AGUARDANDO_MAPEAMENTO')).length,
+      }
+    })
+    .filter((g) => g.fontes.length || semFiltro) // pasta vazia só aparece sem filtro
+})
+
+const fontesSemGrupo = computed(() => {
+  const ids = new Set(grupos.value.map((g) => g.id))
+  return fontesVisiveis.value.filter((f) => !f.grupoId || !ids.has(f.grupoId))
+})
+
+// Com busca, as pastas abrem sozinhas para mostrar o que achou.
+function grupoAberto(id) {
+  return !!busca.value.trim() || gruposAbertos.value.includes(id)
+}
+
+function alternarGrupo(id) {
+  gruposAbertos.value = gruposAbertos.value.includes(id)
+    ? gruposAbertos.value.filter((x) => x !== id)
+    : [...gruposAbertos.value, id]
+}
+
+function abrirModalGrupo(grupo = null) {
+  modalGrupo.value = { aberto: true, grupo }
+}
+
+async function aoSalvarGrupo(salvo) {
+  modalGrupo.value = { aberto: false, grupo: null }
+  if (salvo && !gruposAbertos.value.includes(salvo.id)) gruposAbertos.value = [...gruposAbertos.value, salvo.id]
+  avisar('ok', salvo ? `Grupo ${salvo.nome} salvo.` : 'Grupo excluído. As fontes ficaram sem grupo.')
+  await carregar()
+}
+
 function novaFonte() {
   limparTeste()
   emEdicao.value = null
@@ -434,6 +489,19 @@ async function enviar(arquivo) {
 async function processar(arquivo) {
   const id = arquivo.id
   if (emProcessamento.value.includes(id)) return
+  // Reprocessar um arquivo já processado troca os dados atuais da fonte pelos da nova leitura.
+  if (
+    arquivo.status === 'PROCESSADO' &&
+    !(await confirmar({
+      titulo: 'Reprocessar arquivo?',
+      destaque: arquivo.nome,
+      mensagem: 'O arquivo será lido de novo com o mapeamento atual.',
+      detalhe: 'Os dados desta fonte serão substituídos pelos da nova leitura. Não precisa enviar o arquivo outra vez.',
+      confirmar: 'Reprocessar',
+      icone: 'atualizar',
+    }))
+  )
+    return
 
   emProcessamento.value.push(id)
   delete resultados.value[id]
@@ -565,10 +633,13 @@ watch(haProcessando, (sim) => (sim ? iniciarConsulta() : pararConsulta()))
  * com o mesmo mapeamento). Erros (409, 503) chegam prontos pelo http.js.
  */
 async function cancelar(arquivo) {
-  const confirmado = window.confirm(
-    `Interromper o processamento de "${arquivo.nome}"?\n\n` +
-      'Para continuar depois, clique em Processar: ele recomeça do início, com o mesmo mapeamento.',
-  )
+  const confirmado = await confirmar({
+    titulo: 'Interromper o processamento?',
+    destaque: arquivo.nome,
+    mensagem: 'Para continuar depois, clique em Processar: ele recomeça do início, com o mesmo mapeamento.',
+    confirmar: 'Interromper',
+    icone: 'parar',
+  })
   if (!confirmado || cancelando.value.includes(arquivo.id)) return
 
   cancelando.value.push(arquivo.id)
@@ -595,9 +666,15 @@ async function cancelar(arquivo) {
  * dados), a mensagem chega pronta pelo interceptor do http.js.
  */
 async function excluir(arquivo) {
-  const confirmado = window.confirm(
-    `Excluir "${arquivo.nome}"?\n\nO arquivo é apagado do catálogo e da zona bruta. Não dá para desfazer.`,
-  )
+  const confirmado = await confirmar({
+    titulo: 'Excluir arquivo?',
+    destaque: arquivo.nome,
+    mensagem: 'O arquivo é apagado do catálogo e da zona bruta.',
+    detalhe: 'Não dá para desfazer.',
+    confirmar: 'Excluir',
+    tom: 'perigo',
+    icone: 'lixeira',
+  })
   if (!confirmado || excluindo.value.includes(arquivo.id)) return
 
   excluindo.value.push(arquivo.id)
@@ -673,10 +750,16 @@ onBeforeUnmount(() => {
         <!-- Fonte nova: as camadas dos indicadores cadastrados (UC, TI, PRODES, APP...) chegam
              como fontes. Só para quem opera (T25). Para mudar como uma fonte já existente chega,
              use "Editar" na página dela. -->
-        <BaseButton v-if="podeOperar" tamanho="sm" @click="novaFonte">
-          <AppIcon nome="mais" traco="2.4" class="h-3 w-3" />
-          Nova fonte
-        </BaseButton>
+        <div v-if="podeOperar" class="flex gap-2">
+          <BaseButton variante="secundario" tamanho="sm" @click="abrirModalGrupo()">
+            <AppIcon nome="mais" traco="2.4" class="h-3 w-3" />
+            Novo grupo
+          </BaseButton>
+          <BaseButton tamanho="sm" @click="novaFonte">
+            <AppIcon nome="mais" traco="2.4" class="h-3 w-3" />
+            Nova fonte
+          </BaseButton>
+        </div>
       </div>
 
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -704,8 +787,59 @@ onBeforeUnmount(() => {
         />
       </div>
 
+      <!-- Grupos: pastas que abrem e fecham, com os cards dentro (só organização visual) -->
+      <div v-if="!carregando && !erro && gruposVisiveis.length" class="space-y-3">
+        <section v-for="g in gruposVisiveis" :key="g.id" class="glass">
+          <div class="flex items-center gap-3 px-4 py-3">
+            <button
+              type="button"
+              class="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+              :aria-expanded="grupoAberto(g.id)"
+              @click="alternarGrupo(g.id)"
+            >
+              <AppIcon
+                nome="seta"
+                :class="['h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform', grupoAberto(g.id) && 'rotate-90']"
+              />
+              <AppIcon nome="camadas" class="h-4 w-4 shrink-0 text-cyan-400" />
+              <span class="truncate text-sm font-semibold text-slate-100">{{ g.nome }}</span>
+              <span class="shrink-0 text-xs text-slate-500">
+                {{ g.fontes.length }} {{ g.fontes.length === 1 ? 'fonte' : 'fontes' }}
+                <template v-if="g.inativas"> · {{ g.inativas }} desativada(s)</template>
+              </span>
+              <span v-if="g.aguardando" class="flex shrink-0 items-center gap-1.5 text-xs text-amber-300">
+                <span class="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                {{ g.aguardando }} aguardando mapeamento
+              </span>
+            </button>
+            <BaseButton v-if="podeOperar" variante="fantasma" tamanho="sm" class="shrink-0" @click="abrirModalGrupo(g)">
+              Editar grupo
+            </BaseButton>
+          </div>
+          <div v-if="grupoAberto(g.id)" class="border-t border-slate-800 p-4">
+            <p v-if="!g.fontes.length" class="text-sm text-slate-500">
+              Grupo vazio. Use "Editar grupo" para colocar fontes nele.
+            </p>
+            <FonteList
+              v-else
+              :fontes="g.fontes"
+              :novas="novasPorFonte"
+              :filtrada="true"
+              :pode-operar="podeOperar"
+              :alternando-id="alternandoId"
+              @selecionar="selecionar"
+              @alternar-ativa="alternarAtiva"
+            />
+          </div>
+        </section>
+        <p v-if="fontesSemGrupo.length" class="pt-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+          Fontes sem grupo
+        </p>
+      </div>
+
       <FonteList
-        :fontes="fontesVisiveis"
+        v-if="carregando || erro || fontesSemGrupo.length || !gruposVisiveis.length"
+        :fontes="fontesSemGrupo"
         :carregando="carregando"
         :erro="erro"
         :novas="novasPorFonte"
@@ -715,6 +849,15 @@ onBeforeUnmount(() => {
         @selecionar="selecionar"
         @alternar-ativa="alternarAtiva"
         @tentar-novamente="carregar"
+      />
+
+      <GrupoFontesModal
+        :aberto="modalGrupo.aberto"
+        :grupo="modalGrupo.grupo"
+        :fontes="fontes"
+        :grupos="grupos"
+        @fechar="modalGrupo = { aberto: false, grupo: null }"
+        @salvo="aoSalvarGrupo"
       />
     </template>
 
