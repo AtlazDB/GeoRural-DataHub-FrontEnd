@@ -1,22 +1,26 @@
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { buscarDashboard } from '@/services/dashboardService'
+import { usuarioLogado } from '@/auth/keycloak'
 
 const dashboard = ref(null)
 const carregando = ref(true)
 const erro = ref('')
+
+const primeiroNome = (usuarioLogado()?.nome ?? '').trim().split(/\s+/)[0]
+
+const saudacao = computed(() => {
+  const hora = new Date().getHours()
+  const periodo = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite'
+  return primeiroNome ? `${periodo}, ${primeiroNome}!` : `${periodo}!`
+})
 
 const cards = [
   {
     titulo: 'Fontes ativas',
     campo: 'fontesAtivas',
     descricao: 'Fontes cadastradas e ativas',
-  },
-  {
-    titulo: 'Execuções recentes',
-    campo: 'execucoesUltimos7Dias',
-    descricao: 'Últimos 7 dias',
   },
   {
     titulo: 'Execuções com falha',
@@ -27,11 +31,6 @@ const cards = [
     titulo: 'Na quarentena',
     campo: 'registrosQuarentena',
     descricao: 'Aguardando análise',
-  },
-  {
-    titulo: 'Zona tratada',
-    campo: 'registrosZonaTratada',
-    descricao: 'Registros nas versões atuais',
   },
 ]
 
@@ -78,10 +77,8 @@ function exportarCSV() {
   const linhas = [
     ['Indicador', 'Valor'],
     ['Fontes ativas', resumo.fontesAtivas ?? 0],
-    ['Execuções nos últimos 7 dias', resumo.execucoesUltimos7Dias ?? 0],
     ['Execuções com falha', resumo.execucoesComFalha ?? 0],
     ['Registros na quarentena', resumo.registrosQuarentena ?? 0],
-    ['Registros na zona tratada', resumo.registrosZonaTratada ?? 0],
     [],
     [
       'Fonte',
@@ -137,14 +134,30 @@ onMounted(carregarDashboard)
 <template>
   <main class="space-y-7 p-4 md:p-7">
 
-    <!-- Introdução -->
-    <section>
-      <h2 class="text-lg font-semibold text-white">
-        Visão geral da plataforma
-      </h2>
-      <p class="mt-1 text-sm text-slate-400">
-        Acompanhe as fontes, execuções e processamento dos dados rurais.
-      </p>
+    <!-- Saudação e exportação -->
+    <section class="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <h2 class="text-2xl font-semibold text-white">
+          {{ saudacao }}
+        </h2>
+        <p class="mt-1 text-sm text-slate-400">
+          Acompanhe as fontes, execuções e processamento dos dados rurais.
+        </p>
+      </div>
+
+      <button
+        v-if="dashboard"
+        type="button"
+        @click="exportarCSV"
+        class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-cyan-500 to-teal-400 px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:-translate-y-0.5 hover:shadow-cyan-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+      >
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12" />
+          <path d="m7 10 5 5 5-5" />
+          <path d="M5 21h14" />
+        </svg>
+        Exportar CSV
+      </button>
     </section>
 
     <!-- Carregamento -->
@@ -178,19 +191,8 @@ onMounted(carregarDashboard)
 
     <template v-else-if="dashboard">
 
-      <!-- Exportação -->
-      <div class="flex justify-end">
-        <button
-          type="button"
-          @click="exportarCSV"
-          class="inline-flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 transition hover:border-cyan-400/50 hover:bg-cyan-500/20"
-        >
-          Exportar CSV
-        </button>
-      </div>
-
       <!-- Indicadores -->
-      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <section class="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <article
           v-for="card in cards"
           :key="card.campo"
