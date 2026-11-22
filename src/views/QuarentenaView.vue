@@ -68,6 +68,10 @@ const tiposPorFamilia = computed(() =>
 
 const temFiltro = computed(() => Object.values(filtros).some(Boolean))
 
+// O filtro de fonte lista só as ativas. Os registros de uma fonte desativada continuam na
+// quarentena e aparecem em "Todas as fontes".
+const fontesAtivas = computed(() => fontes.value.filter((f) => f.status !== 'inativa'))
+
 function mostrarAviso(texto, tipo = 'ok') {
   aviso.value = { texto, tipo }
   clearTimeout(timerAviso)
@@ -336,7 +340,7 @@ onBeforeUnmount(() => {
           <label class="label" for="q-fonte">Fonte</label>
           <select id="q-fonte" v-model="filtros.fonteId" class="input">
             <option value="">Todas as fontes</option>
-            <option v-for="f in fontes" :key="f.id" :value="f.id">{{ f.nome }}</option>
+            <option v-for="f in fontesAtivas" :key="f.id" :value="f.id">{{ f.nome }}</option>
           </select>
         </div>
         <div>
