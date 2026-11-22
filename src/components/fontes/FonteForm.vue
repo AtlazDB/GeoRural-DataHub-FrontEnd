@@ -75,7 +75,8 @@ watch(
   (f) => (form.value = f ? daFonte(f) : vazio()),
 )
 
-const formatos = ['CSV', 'GeoJSON', 'SHP', 'XLSX', 'JSON']
+// Só os formatos que a ingestão sabe ler (XLSX e JSON puro não são lidos)
+const formatos = ['CSV', 'GeoJSON', 'SHP']
 const periodicidadesPadrao = ['diária', 'semanal', 'mensal', 'anual', 'eventual']
 // Fonte antiga gravada com outra grafia (ex.: "diaria"): o valor dela continua na lista.
 const periodicidades = computed(() =>
