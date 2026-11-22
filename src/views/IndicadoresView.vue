@@ -46,6 +46,10 @@ const erroCadastro = ref(null) // { mensagem, campos }
 
 const nomeDaFonte = computed(() => Object.fromEntries(fontes.value.map((f) => [f.id, f.sigla])))
 
+// No cadastro só entram fontes ativas (desativada não recebe dados novos). O nomeDaFonte continua
+// com todas: indicador antigo de fonte desativada ainda mostra a sigla na lista.
+const fontesAtivas = computed(() => fontes.value.filter((f) => f.status !== 'inativa'))
+
 async function carregarFontes() {
   try {
     fontes.value = await listarFontes()
@@ -512,7 +516,7 @@ onMounted(() => {
       <!-- v-if: o formulário recomeça vazio a cada abertura -->
       <IndicadorForm
         v-if="cadastroAberto"
-        :fontes="fontes"
+        :fontes="fontesAtivas"
         :salvando="salvando"
         :erro="erroCadastro"
         @salvar="salvarIndicador"
