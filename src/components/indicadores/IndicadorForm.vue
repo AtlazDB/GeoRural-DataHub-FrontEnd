@@ -61,8 +61,9 @@ const form = ref({
   since: '',
   // parameters.extraSources: outras fontes somadas à principal (ex.: ISAP = UC + TI + quilombola).
   extraSources: [],
-  // parameters.baseSources do BASE_COVERAGE: a camada que vira o denominador (ex.: APP).
-  baseSource: '',
+  // parameters.baseSources do BASE_COVERAGE: a camada que vira o denominador (ex.: APP). Pode ser
+  // mais de uma fonte (ex.: a APP do PR em vários pedaços, cada um numa fonte): a DAG junta todas.
+  baseSources: [],
   // parameters.minimumPercent da cobertura de área: o mínimo exigido em % (ex.: 20 na RL do Paraná).
   // Com ele, o card do imóvel mostra quantos hectares faltam (déficit) ou sobram (excedente).
   minimumPercent: '',
@@ -78,6 +79,16 @@ const porCamada = computed(() => form.value.calculationModel === 'BASE_COVERAGE'
 const coberturaDeArea = computed(() => form.value.calculationModel === 'AREA_COVERAGE')
 // A principal não aparece na lista de extras.
 const fontesExtras = computed(() => props.fontes.filter((f) => f.id !== form.value.fonteId))
+
+// Camada base: busca por sigla ou nome e "marcar todas as da busca" (ex.: digitar APP e marcar as 15).
+const buscaBase = ref('')
+const fontesBase = computed(() => {
+  const termo = buscaBase.value.trim().toLowerCase()
+  return props.fontes.filter((f) => !termo || `${f.sigla} ${f.nome}`.toLowerCase().includes(termo))
+})
+function marcarBaseDaBusca() {
+  form.value.baseSources = [...new Set([...form.value.baseSources, ...fontesBase.value.map((f) => f.id)])]
+}
 
 // Campo que o back apontou como inválido (400 com `campos`, ou 409 na sigla).
 function temErro(campo) {
@@ -115,7 +126,7 @@ function submeter() {
   if (f.since) parameters.since = f.since
   const extras = f.extraSources.filter((id) => id !== f.fonteId).map(Number)
   if (extras.length) parameters.extraSources = extras
-  if (porCamada.value && f.baseSource !== '') parameters.baseSources = [Number(f.baseSource)]
+  if (porCamada.value && f.baseSources.length) parameters.baseSources = f.baseSources.map(Number)
   if (coberturaDeArea.value && f.minimumPercent !== '' && f.minimumPercent !== null) {
     parameters.minimumPercent = Number(f.minimumPercent)
   }
@@ -215,13 +226,47 @@ function submeter() {
     </div>
     <p class="-mt-2 text-xs text-slate-500">{{ modelo.ajuda }}</p>
 
-    <div v-if="porCamada">
-      <label class="label" for="ind-base">Camada base (o denominador)</label>
-      <select id="ind-base" v-model="form.baseSource" :class="classeCampo('parameters')" required>
-        <option value="" disabled>Escolha a camada base, ex.: APP</option>
-        <option v-for="f in fontes" :key="f.id" :value="f.id">{{ f.sigla }} · {{ f.nome }}</option>
-      </select>
-    </div>
+    <!-- Camada base: uma ou várias fontes (ex.: APP em pedaços); a DAG junta todas -->
+    <fieldset v-if="porCamada">
+      <legend class="label">
+        Camada base (o denominador)
+        <span class="text-slate-500">· {{ form.baseSources.length ? `${form.baseSources.length} marcada(s)` : 'marque pelo menos uma' }}</span>
+      </legend>
+      <div class="flex gap-2">
+        <input
+          v-model="buscaBase"
+          type="search"
+          class="input"
+          placeholder="Buscar fonte, ex.: APP"
+          aria-label="Buscar fonte da camada base"
+        />
+        <BaseButton type="button" variante="fantasma" tamanho="sm" class="shrink-0" @click="marcarBaseDaBusca">
+          Marcar todas da busca
+        </BaseButton>
+        <BaseButton
+          v-if="form.baseSources.length"
+          type="button"
+          variante="fantasma"
+          tamanho="sm"
+          class="shrink-0"
+          @click="form.baseSources = []"
+        >
+          Limpar
+        </BaseButton>
+      </div>
+      <div
+        :class="['mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg border p-2', temErro('parameters') ? 'border-rose-500/50' : 'border-slate-800']"
+      >
+        <label v-for="f in fontesBase" :key="f.id" class="flex cursor-pointer items-center gap-2 text-sm text-slate-300">
+          <input v-model="form.baseSources" type="checkbox" :value="f.id" />
+          {{ f.sigla }} · {{ f.nome }}
+        </label>
+        <p v-if="!fontesBase.length" class="text-xs text-slate-500">Nenhuma fonte com essa busca.</p>
+      </div>
+      <p class="mt-1 text-xs text-slate-500">
+        Se a camada base está dividida em várias fontes (ex.: APP, APP02, APP03…), marque todas: o cálculo junta os pedaços.
+      </p>
+    </fieldset>
 
     <!-- Fontes extras: o indicador cruza o imóvel com todas juntas -->
     <details class="rounded-xl border border-slate-800 p-3" :open="form.extraSources.length > 0">
