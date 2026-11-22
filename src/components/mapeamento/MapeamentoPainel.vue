@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
+import { useConfirmacao } from '@/composables/useConfirmacao'
 import ColunasDetectadas from '@/components/mapeamento/ColunasDetectadas.vue'
 import MapeamentosTabela from '@/components/mapeamento/MapeamentosTabela.vue'
 import RegraForm from '@/components/mapeamento/RegraForm.vue'
@@ -143,11 +144,18 @@ async function salvar(corpo) {
   }
 }
 
+const { confirmar } = useConfirmacao()
+
 /** Remove um mapeamento: a coluna volta a ser "nova". */
 async function remover(mapeamento) {
-  const confirmado = window.confirm(
-    `Remover o mapeamento de "${mapeamento.colunaNome}"?\n\nA coluna volta a ficar sem destino e sem regras.`,
-  )
+  const confirmado = await confirmar({
+    titulo: 'Remover o mapeamento?',
+    destaque: mapeamento.colunaNome,
+    mensagem: 'A coluna volta a ficar sem destino e sem regras.',
+    confirmar: 'Remover',
+    tom: 'perigo',
+    icone: 'lixeira',
+  })
   if (!confirmado || removendo.value.includes(mapeamento.id)) return
 
   removendo.value.push(mapeamento.id)

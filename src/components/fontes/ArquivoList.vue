@@ -1,4 +1,5 @@
 <script setup>
+import { computed } from 'vue'
 import BaseButton from '@/components/BaseButton.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import { formatarTamanho, formatarDataHora } from '@/utils/formato'
@@ -54,6 +55,22 @@ const etiquetas = {
 // sem esperar a próxima consulta à API.
 function statusDe(arquivo) {
   return props.emProcessamento.includes(arquivo.id) ? 'PROCESSANDO' : arquivo.status
+}
+
+/**
+ * Reprocessar: só o arquivo PROCESSADO mais recente da fonte. É ele que está valendo; reprocessar
+ * um mais antigo trocaria os dados atuais por dados velhos. Serve para quando o mapeamento mudou
+ * (ex.: uma coluna nova) e os dados precisam ser lidos de novo, sem subir o arquivo outra vez.
+ */
+const ultimoProcessadoId = computed(() => {
+  const processados = (props.fonte.arquivos ?? []).filter((a) => a.status === 'PROCESSADO')
+  if (!processados.length) return null
+  const quando = (a) => new Date(a.enviadoEm ?? 0).getTime() || 0
+  return processados.reduce((m, a) => (quando(a) > quando(m) || (quando(a) === quando(m) && a.id > m.id) ? a : m)).id
+})
+
+function podeReprocessar(arquivo) {
+  return ehProcessavel(arquivo) && statusDe(arquivo) === 'PROCESSADO' && arquivo.id === ultimoProcessadoId.value
 }
 
 function podeProcessar(arquivo) {
@@ -142,6 +159,19 @@ function podeExcluir(arquivo) {
         >
           <AppIcon nome="executar" traco="2.2" class="h-3 w-3" />
           Processar
+        </BaseButton>
+
+        <!-- Mapeamento mudou depois de processar (ex.: coluna nova): lê o mesmo arquivo de novo. -->
+        <BaseButton
+          v-if="podeOperar && podeReprocessar(arquivo)"
+          variante="secundario"
+          tamanho="sm"
+          class="shrink-0"
+          title="Lê o arquivo de novo com o mapeamento atual"
+          @click="$emit('processar', arquivo)"
+        >
+          <AppIcon nome="executar" traco="2.2" class="h-3 w-3" />
+          Reprocessar
         </BaseButton>
 
         <!-- Só depois que o back gravou PROCESSANDO (arquivo.status): antes disso não há execução para interromper. -->

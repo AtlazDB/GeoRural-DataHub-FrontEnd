@@ -174,6 +174,32 @@ export async function alterarAtivaFonte(fonteId, ativa) {
 }
 
 /**
+ * Grupos de fontes: só organizam a tela (cards dentro de uma "pasta").
+ *   GET    /fontes/grupos        → [ { id, nome, fonteIds } ]
+ *   POST   /fontes/grupos        { nome, fonteIds } → 201 · 409 nome repetido
+ *   PUT    /fontes/grupos/:id    { nome, fonteIds } → o grupo (troca as fontes dele)
+ *   DELETE /fontes/grupos/:id    204 (as fontes ficam sem grupo)
+ */
+export async function listarGrupos() {
+  const { data } = await http.get('/fontes/grupos')
+  return data
+}
+
+export async function criarGrupo(grupo) {
+  const { data } = await http.post('/fontes/grupos', grupo)
+  return data
+}
+
+export async function atualizarGrupo(id, grupo) {
+  const { data } = await http.put(`/fontes/grupos/${id}`, grupo)
+  return data
+}
+
+export async function excluirGrupo(id) {
+  await http.delete(`/fontes/grupos/${id}`)
+}
+
+/**
  * Já implementado como exemplo do padrão que os TODOs acima seguem.
  * Use como referência quando travar.
  */

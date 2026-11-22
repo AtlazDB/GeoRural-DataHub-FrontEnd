@@ -2,6 +2,7 @@
 import AppMenu from '@/components/layout/AppMenu.vue'
 import AppTopo from '@/components/layout/AppTopo.vue'
 import AppFooter from '@/components/layout/AppFooter.vue'
+import ConfirmacaoDialogo from '@/components/ConfirmacaoDialogo.vue'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
@@ -31,4 +32,7 @@ const route = useRoute()
       </main>
     </div>
   </div>
+
+  <!-- Perguntas de confirmação (useConfirmacao), no lugar do window.confirm. -->
+  <ConfirmacaoDialogo />
 </template>
