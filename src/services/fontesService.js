@@ -139,19 +139,16 @@ export async function testarLink(dados) {
  * "Executar agora" de uma fonte por link.
  *
  *   POST /fontes/:id/executar
- *        202 → { resultado: 'SOLICITADA', mensagem }           (Airflow ligado: coleta na fila)
- *        201 → { resultado: 'RECEBIDO', mensagem, arquivo }     (arquivo novo)
- *        200 → { resultado: 'SEM_MUDANCA', mensagem, arquivo } (igual à última coleta)
- *        400 → fonte sem link ou link inválido
- *        502 → o servidor de origem falhou, ou cortou a resposta no limite por pedido
+ *        202 → { resultado: 'SOLICITADA', mensagem }   (coleta disparada no Airflow)
+ *        400 → fonte sem link
+ *        503 → { mensagem }   (Airflow fora do ar)
  *
- * Com o Airflow ligado, a resposta é imediata e o andamento aparece na fonte
- * (coletando, ultimaColetaMensagem, ultimaColetaEm). Sem ele, o download
- * acontece dentro da requisição: um arquivo grande demora, por isso o timeout
- * é maior que o padrão do http.js (60 s), como no upload.
+ * A resposta é imediata: o andamento aparece na fonte (coletando,
+ * ultimaColetaMensagem, ultimaColetaEm), e o arquivo coletado é processado
+ * pelo próprio Airflow.
  */
 export async function executarColeta(fonteId) {
-  const { data } = await http.post(`/fontes/${fonteId}/executar`, null, { timeout: 10 * 60_000 })
+  const { data } = await http.post(`/fontes/${fonteId}/executar`)
   return data
 }
 
@@ -164,6 +161,43 @@ export async function executarColeta(fonteId) {
 export async function atualizarFonte(fonteId, fonte) {
   const { data } = await http.put(`/fontes/${fonteId}`, fonte)
   return data
+}
+
+/**
+ * Liga ou desliga a fonte (chave do card).
+ *   POST /fontes/:id/ativar     200 → a fonte
+ *   POST /fontes/:id/desativar  200 → a fonte (status 'inativa')
+ * Fonte desativada não recebe arquivo nem coleta; os dados já carregados continuam.
+ */
+export async function alterarAtivaFonte(fonteId, ativa) {
+  const { data } = await http.post(`/fontes/${fonteId}/${ativa ? 'ativar' : 'desativar'}`)
+  return data
+}
+
+/**
+ * Grupos de fontes: só organizam a tela (cards dentro de uma "pasta").
+ *   GET    /fontes/grupos        → [ { id, nome, fonteIds } ]
+ *   POST   /fontes/grupos        { nome, fonteIds } → 201 · 409 nome repetido
+ *   PUT    /fontes/grupos/:id    { nome, fonteIds } → o grupo (troca as fontes dele)
+ *   DELETE /fontes/grupos/:id    204 (as fontes ficam sem grupo)
+ */
+export async function listarGrupos() {
+  const { data } = await http.get('/fontes/grupos')
+  return data
+}
+
+export async function criarGrupo(grupo) {
+  const { data } = await http.post('/fontes/grupos', grupo)
+  return data
+}
+
+export async function atualizarGrupo(id, grupo) {
+  const { data } = await http.put(`/fontes/grupos/${id}`, grupo)
+  return data
+}
+
+export async function excluirGrupo(id) {
+  await http.delete(`/fontes/grupos/${id}`)
 }
 
 /**

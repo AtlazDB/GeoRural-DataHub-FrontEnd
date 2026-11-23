@@ -28,7 +28,7 @@ defineProps({
 
 const variantes = {
   primario:
-    'border-transparent bg-gradient-to-br from-cyan-500 to-indigo-500 text-[#04111d] shadow-lg shadow-cyan-500/20 hover:opacity-90',
+    'botao-primario border-transparent bg-gradient-to-br from-cyan-500 to-indigo-500 text-[#04111d] shadow-lg shadow-cyan-500/20 hover:opacity-90',
   secundario:
     'border-cyan-500/30 bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/25',
   fantasma:

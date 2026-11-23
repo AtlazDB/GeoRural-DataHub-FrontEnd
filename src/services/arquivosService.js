@@ -4,38 +4,48 @@ import http from './http'
  * Arquivos já recebidos na zona bruta.
  *
  *   POST /arquivos/:id/processar
- *        200 → { arquivoId, status: 'PROCESSADO', execucaoId, versao,
- *                registrosLidos, registrosValidos, registrosInvalidos,
- *                registrosForaDoRecorte }   (o último só nos focos do INPE)
- *        200 → { arquivoId, status: 'REJEITADO', execucaoId, mensagemErro }
- *        400 → { mensagem }   (fonte ou formato sem processamento: ver utils/processamento.js)
+ *        200 → { arquivoId, status: 'PROCESSANDO' }   (Airflow disparado)
  *        404 → { mensagem }
  *        409 → { mensagem }   (o arquivo já está sendo processado)
+ *        503 → { mensagem }   (Airflow fora do ar: o arquivo fica RECEBIDO)
+ *
+ *   POST /arquivos/:id/cancelar
+ *        200 → { arquivoId, status: 'REJEITADO' }   (execução encerrada no Airflow)
+ *        409 → { mensagem }   (o arquivo não está sendo processado)
+ *        503 → { mensagem }   (Airflow fora do ar: o arquivo continua PROCESSANDO)
  *
  *   DELETE /arquivos/:id
  *        204 → (sem corpo)
  *        404 → { mensagem }
  *        409 → { mensagem }   (não está REJEITADO, ou já gerou versão de dados)
  *
- * Repare que REJEITADO volta com 200: o pedido deu certo, quem falhou foi
- * o arquivo. Por isso quem chama precisa olhar o `status` da resposta, e
- * não só o catch.
+ * O resultado do processamento (PROCESSADO, REJEITADO, AGUARDANDO_MAPEAMENTO)
+ * não vem nesta resposta: chega depois, pelo status do arquivo.
  */
 
 /**
- * Valida o shapefile e grava os imóveis numa nova versão.
- *
- * A chamada é SÍNCRONA: o back-end só responde quando termina — segundos
- * para um município, muitos minutos para o Paraná inteiro. Por isso o
- * timeout aqui é bem maior que o padrão de 60 s do http.js.
+ * Dispara o Airflow, que processa o arquivo pelo mapeamento da fonte.
+ * A resposta é imediata; o andamento aparece no status do arquivo.
  *
  * @param {number} arquivoId
- * @returns {Promise<object>} o resultado do processamento
+ * @returns {Promise<{arquivoId: number, status: string}>}
  */
 export async function processarArquivo(arquivoId) {
-  const { data } = await http.post(`/arquivos/${arquivoId}/processar`, null, {
-    timeout: 30 * 60_000,
-  })
+  const { data } = await http.post(`/arquivos/${arquivoId}/processar`)
+  return data
+}
+
+/**
+ * Interrompe o processamento em andamento: o Airflow encerra a execução e o
+ * arquivo fica REJEITADO, pronto para ser processado de novo do começo.
+ * 409 se o arquivo não está PROCESSANDO; 503 se o Airflow está fora do ar
+ * (aí o arquivo continua PROCESSANDO).
+ *
+ * @param {number} arquivoId
+ * @returns {Promise<{arquivoId: number, status: string}>}
+ */
+export async function cancelarArquivo(arquivoId) {
+  const { data } = await http.post(`/arquivos/${arquivoId}/cancelar`)
   return data
 }
 

@@ -32,6 +32,14 @@ const props = defineProps({
   filtrado: { type: Boolean, default: false },
   /** FeatureCollection de GET /focos (os focos que o IFC conta), ou null */
   focos: { type: Object, default: null },
+  /** Mapa { [codImovel]: { status, quantidade, calculados } } carregado na consulta */
+  resumoIndicadores: { type: Object, default: () => ({}) },
+  /**
+   * Espaço (px) coberto pelos painéis flutuantes em cada lado do mapa:
+   * { topo, direita, baixo, esquerda }. O enquadramento desconta essa folga
+   * para o imóvel/município não ficar escondido atrás de um painel.
+   */
+  folga: { type: Object, default: () => ({}) },
 })
 
 const emit = defineEmits(['area', 'selecionar'])
@@ -41,24 +49,45 @@ const ZOOM_PARANA = 7
 const ZOOM_MINIMO = 11 // abaixo disso a área visível tem imóveis demais
 const ZOOM_MAXIMO = 16 // o fundo da Esri não tem tiles além disso
 
+const ROTULO_STATUS = {
+  CONFORME: 'Conforme',
+  ALERTA: 'Alerta',
+  CRITICO: 'Crítico',
+  VALIDACAO: 'Em validação',
+}
+
 const { claro } = useTema()
 
 // A máscara tem a cor do fundo da aplicação: fora do PR o mapa "some".
 function paleta(temaClaro) {
   const c = temaClaro
-    ? { linha: '#0891b2', destaque: '#0f172a', municipio: '#475569', estado: '#94a3b8', fundo: '#eef2f6' }
-    : { linha: '#22d3ee', destaque: '#f8fafc', municipio: '#cbd5e1', estado: '#64748b', fundo: '#0b0f19' }
+    ? { linha: '#0e7490', destaque: '#1e293b', municipio: '#334155', estado: '#334155', fundo: '#dce2e9' }
+    : { linha: '#22d3ee', destaque: '#f8fafc', municipio: '#e2e8f0', estado: '#94a3b8', fundo: '#0b0f19' }
   return {
     imovel: { color: c.linha, weight: 1, fillColor: '#22d3ee', fillOpacity: 0.15 },
+    status: {
+      CONFORME: { color: '#10b981', weight: 1.5, fillColor: '#10b981', fillOpacity: 0.22 },
+      ALERTA: { color: '#f59e0b', weight: 1.5, fillColor: '#f59e0b', fillOpacity: 0.25 },
+      CRITICO: { color: '#f43f5e', weight: 1.8, fillColor: '#f43f5e', fillOpacity: 0.28 },
+      VALIDACAO: { color: '#94a3b8', weight: 1.4, fillColor: '#94a3b8', fillOpacity: 0.18 },
+    },
     destaque: { color: c.destaque, weight: 2.5, fillColor: '#22d3ee', fillOpacity: 0.4 },
-    municipio: { color: c.municipio, weight: 2, dashArray: '6 4', fill: false },
-    estado: { color: c.estado, weight: 1.5, fill: false },
-    mascara: { stroke: false, fillColor: c.fundo, fillOpacity: 0.85 },
+    municipio: { color: c.municipio, weight: 2.5, dashArray: '6 4', fill: false },
+    // Contorno do PR forte e o resto do mapa quase apagado: o olho vai direto para o estado.
+    estado: { color: c.estado, weight: 2.5, fill: false },
+    mascara: { stroke: false, fillColor: c.fundo, fillOpacity: 0.94 },
     foco: { radius: 4, color: '#fb923c', weight: 1, fillColor: '#f97316', fillOpacity: 0.9 },
   }
 }
 
 let estilo = paleta(claro.value)
+
+function estiloImovel(feature) {
+  const cod = feature?.properties?.codImovel
+  const status = cod ? props.resumoIndicadores?.[cod]?.status : null
+  if (status && estilo.status[status]) return estilo.status[status]
+  return estilo.imovel
+}
 
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas'
 const fundoEsri = (camada) =>
@@ -76,6 +105,8 @@ let fundo = null
 let referencia = null
 let mascara = null
 let contornoEstado = null
+let observador = null // ResizeObserver: o mapa acompanha o tamanho da tela
+let limitesParana = null
 
 const mensagem = computed(() => {
   if (!perto.value) return { tipo: 'info', texto: 'Aproxime o zoom para ver os imóveis' }
@@ -98,7 +129,7 @@ const coresMensagem = {
 }
 
 onMounted(() => {
-  const limitesParana = L.geoJSON(parana).getBounds()
+  limitesParana = L.geoJSON(parana).getBounds()
 
   // preferCanvas: mil polígonos num único <canvas> em vez de mil elementos SVG.
   // maxBounds + viscosidade 1: o mapa não deixa arrastar para fora do PR.
@@ -106,11 +137,22 @@ onMounted(() => {
     preferCanvas: true,
     maxBounds: limitesParana.pad(0.05),
     maxBoundsViscosity: 1,
+    zoomControl: false, // vai para baixo, à direita: em cima ficam os painéis
   }).setView(CENTRO_PARANA, ZOOM_PARANA)
 
   // Zoom mínimo = o que mostra o estado inteiro. Calculado pelo tamanho real
   // do mapa na tela: numa tela estreita ele é menor que num monitor largo.
   mapa.setMinZoom(mapa.getBoundsZoom(limitesParana))
+  L.control.zoom({ position: 'bottomright' }).addTo(mapa)
+
+  // O mapa ocupa a tela toda: se a janela (ou o menu) mudar de tamanho,
+  // o Leaflet precisa recalcular o tamanho e o zoom mínimo.
+  observador = new ResizeObserver(() => {
+    if (!mapa) return
+    mapa.invalidateSize()
+    mapa.setMinZoom(mapa.getBoundsZoom(limitesParana))
+  })
+  observador.observe(container.value)
 
   // Esri não exige chave de API (a CARTO do protótipo passou a exigir).
   const atribuicao =
@@ -122,8 +164,8 @@ onMounted(() => {
 
   // Uma camada só para os imóveis, reaproveitada a cada movimento: troca-se
   // o conteúdo (clearLayers + addData), não a camada.
-  // style como função para os imóveis carregados depois de trocar o tema.
-  camadaImoveis = L.geoJSON(null, { style: () => estilo.imovel, onEachFeature: prepararImovel }).addTo(mapa)
+  // style como função para os imóveis refletirem tema e status dos indicadores.
+  camadaImoveis = L.geoJSON(null, { style: estiloImovel, onEachFeature: prepararImovel }).addTo(mapa)
   camadaDestaque = L.geoJSON(null, { style: () => estilo.destaque, interactive: false }).addTo(mapa)
   camadaFocos = L.geoJSON(null, {
     pointToLayer: (_feature, posicao) => L.circleMarker(posicao, estilo.foco),
@@ -140,6 +182,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  observador?.disconnect()
   mapa?.remove()
   mapa = null
 })
@@ -151,12 +194,15 @@ watch(claro, (temaClaro) => {
   referencia.setUrl(fundoEsri('Reference'))
   mascara.setStyle(estilo.mascara)
   contornoEstado.setStyle(estilo.estado)
-  camadaImoveis.setStyle(estilo.imovel)
+  camadaImoveis.setStyle(estiloImovel)
   camadaDestaque.setStyle(estilo.destaque)
   camadaMunicipio?.setStyle(estilo.municipio)
 })
 
 watch(() => props.camada, desenharImoveis)
+watch(() => props.resumoIndicadores, () => {
+  camadaImoveis?.setStyle(estiloImovel)
+}, { deep: true })
 watch(() => props.destaque, desenharDestaque)
 watch(() => props.focos, desenharFocos)
 watch(
@@ -164,7 +210,7 @@ watch(
   () => {
     if (!mapa) return
     desenharMunicipio()
-    if (camadaMunicipio) mapa.fitBounds(camadaMunicipio.getBounds(), { padding: [24, 24] })
+    if (camadaMunicipio) mapa.fitBounds(camadaMunicipio.getBounds(), margens(24))
     else mapa.setView(CENTRO_PARANA, ZOOM_PARANA)
   },
 )
@@ -224,11 +270,17 @@ function prepararImovel(feature, poligono) {
 // vêm dos arquivos das fontes e não devem ser interpretados como marcação.
 function montarPopup(imovel) {
   const caixa = document.createElement('div')
+  const resumo = imovel?.codImovel ? props.resumoIndicadores?.[imovel.codImovel] : null
+  const statusTexto = resumo?.status
+    ? `${ROTULO_STATUS[resumo.status] ?? resumo.status} (${resumo.calculados}/${resumo.quantidade})`
+    : null
+
   const linhas = [
     ['Código', imovel.codImovel],
     ['Município', imovel.municipio ?? '—'],
     ['Área', formatarArea(imovel.areaHa)],
     ['Situação', formatarSituacao(imovel.situacao)],
+    ...(statusTexto ? [['Indicadores', statusTexto]] : []),
   ]
   for (const [rotulo, valor] of linhas) {
     const linha = document.createElement('div')
@@ -286,6 +338,15 @@ function desenharMunicipio() {
   }
 }
 
+/** Padding do fitBounds: a margem mínima mais o que os painéis cobrem. */
+function margens(minimo) {
+  const { topo = 0, direita = 0, baixo = 0, esquerda = 0 } = props.folga
+  return {
+    paddingTopLeft: [esquerda + minimo, topo + minimo],
+    paddingBottomRight: [direita + minimo, baixo + minimo],
+  }
+}
+
 /**
  * Leva o mapa até a caixa envolvente de um imóvel da tabela.
  * Atenção à ordem: a API e o GeoJSON usam [lon, lat]; o Leaflet usa [lat, lon].
@@ -296,7 +357,7 @@ function enquadrar({ minLon, minLat, maxLon, maxLat }) {
       [minLat, minLon],
       [maxLat, maxLon],
     ],
-    { padding: [32, 32], maxZoom: ZOOM_MAXIMO },
+    { ...margens(32), maxZoom: ZOOM_MAXIMO },
   )
 }
 
@@ -304,15 +365,18 @@ defineExpose({ enquadrar })
 </script>
 
 <template>
-  <div class="relative">
-    <div
-      ref="container"
-      class="isolate h-[520px] w-full overflow-hidden rounded-xl border border-slate-800"
-    />
+  <div class="relative h-full w-full">
+    <div ref="container" class="isolate h-full w-full" />
 
+    <!-- Embaixo, no centro: em cima ficam os painéis da tela -->
     <div
       v-if="mensagem"
-      class="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-3"
+      class="pointer-events-none absolute z-10 flex justify-center px-14"
+      :style="{
+        left: `${folga.esquerda ?? 0}px`,
+        right: `${folga.direita ?? 0}px`,
+        bottom: `${(folga.baixo ?? 0) + 16}px`,
+      }"
     >
       <span
         :class="[

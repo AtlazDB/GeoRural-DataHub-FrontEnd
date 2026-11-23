@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import { usePermissoes } from '@/composables/usePermissoes'
 import { formatarArea, formatarDataHora } from '@/utils/formato'
 import {
   NOMES,
@@ -13,11 +14,9 @@ import {
 } from '@/utils/indicadores'
 
 /**
- * IRL e IFC do imóvel selecionado, no desenho do protótipo da Sprint 2. Cada
- * indicador mostra a versão dos dados e a regra que produziram o número, e
- * leva à Rastreabilidade ("De onde veio este número?").
- *
- * Só apresentação: a view busca os indicadores e trata o "Calcular agora".
+ * IRL e IFC do imóvel selecionado. Cada indicador mostra a versão dos dados e a
+ * regra que produziram o número; "De onde veio este número?" pede à view o modal
+ * com a origem e a comparação de versões.
  */
 const props = defineProps({
   codImovel: { type: String, default: null },
@@ -28,7 +27,9 @@ const props = defineProps({
   calculando: { type: Boolean, default: false },
 })
 
-defineEmits(['calcular', 'tentar-novamente'])
+defineEmits(['calcular', 'tentar-novamente', 'origem'])
+
+const { podeOperar } = usePermissoes()
 
 const irl = computed(() => props.indicadores?.find((i) => i.indicador === 'IRL') ?? null)
 const ifc = computed(() => props.indicadores?.find((i) => i.indicador === 'IFC') ?? null)
@@ -46,10 +47,6 @@ function rodape(indicador) {
     rotuloVersao(indicador.versaoInsumo),
     `calculado em ${formatarDataHora(indicador.calculadoEm)}`,
   ].join(' · ')
-}
-
-function rastreio(indicador) {
-  return { name: 'rastreabilidade', query: { imovel: props.codImovel, indicador } }
 }
 </script>
 
@@ -88,9 +85,10 @@ function rastreio(indicador) {
       O cálculo usa a Reserva Legal e os focos de calor já carregados. Depois de carregar dados
       novos, calcule de novo.
     </p>
-    <BaseButton class="mt-4" tamanho="sm" :carregando="calculando" @click="$emit('calcular')">
+    <BaseButton v-if="podeOperar" class="mt-4" tamanho="sm" :carregando="calculando" @click="$emit('calcular')">
       Calcular indicadores
     </BaseButton>
+    <p v-else class="mt-4 text-xs text-slate-500">O cálculo é feito pela equipe de dados.</p>
   </div>
 
   <!-- O código do imóvel aparece no cabeçalho do card (ConsultaView) -->
@@ -131,13 +129,14 @@ function rastreio(indicador) {
           <span v-else class="text-emerald-300">sobram {{ formatarDecimal(irl.saldoHa, 2) }} ha</span>
         </p>
         <p class="mt-2 text-[10.5px] leading-relaxed text-slate-500">{{ rodape(irl) }}</p>
-        <RouterLink
-          :to="rastreio('IRL')"
+        <button
+          type="button"
           class="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11.5px] font-medium text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
+          @click="$emit('origem', 'IRL')"
         >
           <AppIcon nome="rastro" class="h-3.5 w-3.5" />
           De onde veio este número?
-        </RouterLink>
+        </button>
       </template>
       <p v-else class="mt-2 text-[12px] text-slate-500">
         Sem Reserva Legal carregada para o município deste imóvel.
@@ -174,18 +173,19 @@ function rastreio(indicador) {
           {{ Number(ifc.numerador) === 1 ? 'foco detectado' : 'focos detectados' }} no imóvel
         </p>
         <p class="mt-2 text-[10.5px] leading-relaxed text-slate-500">{{ rodape(ifc) }}</p>
-        <RouterLink
-          :to="rastreio('IFC')"
+        <button
+          type="button"
           class="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11.5px] font-medium text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
+          @click="$emit('origem', 'IFC')"
         >
           <AppIcon nome="rastro" class="h-3.5 w-3.5" />
           De onde veio este número?
-        </RouterLink>
+        </button>
       </template>
       <p v-else class="mt-2 text-[12px] text-slate-500">Sem focos de calor carregados.</p>
     </section>
 
-    <div class="flex justify-end">
+    <div v-if="podeOperar" class="flex justify-end">
       <BaseButton variante="fantasma" tamanho="sm" :carregando="calculando" @click="$emit('calcular')">
         <AppIcon v-if="!calculando" nome="atualizar" traco="2.4" class="h-3 w-3" />
         Recalcular

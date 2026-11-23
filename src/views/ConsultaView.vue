@@ -1,18 +1,24 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
-import BaseCard from '@/components/BaseCard.vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import AppIcon from '@/components/AppIcon.vue'
 import FiltroTerritorio from '@/components/consulta/FiltroTerritorio.vue'
 import MapaImoveis from '@/components/consulta/MapaImoveis.vue'
 import TabelaImoveis from '@/components/consulta/TabelaImoveis.vue'
 import CardIndicadores from '@/components/consulta/CardIndicadores.vue'
+import CardIndicadoresCadastrados from '@/components/consulta/CardIndicadoresCadastrados.vue'
+import GraficosIndicadores from '@/components/consulta/GraficosIndicadores.vue'
+import ModalOrigem from '@/components/consulta/ModalOrigem.vue'
 import {
   listarPaginaImoveis,
   buscarImoveisNoMapa,
   buscarImovel,
 } from '@/services/imoveisService'
 import { listarMunicipios, buscarMunicipio } from '@/services/municipiosService'
+import { buscarMeuAcesso } from '@/services/acessoService'
 import { buscarFocosNoMapa } from '@/services/focosService'
 import { buscarIndicadores, calcularIndicadores } from '@/services/indicadoresService'
+import { listarIndicadores, buscarResultado } from '@/services/indicadoresCadastrosService'
+import { buscarOrigem, compararVersoes } from '@/services/versoesService'
 import { formatarNumero } from '@/utils/formato'
 
 /**
@@ -25,11 +31,18 @@ import { formatarNumero } from '@/utils/formato'
  */
 const UF = 'PR'
 const TAMANHO = 50
+const PRIORIDADE_STATUS = {
+  CRITICO: 4,
+  ALERTA: 3,
+  VALIDACAO: 2,
+  CONFORME: 1,
+}
 
 // --- Filtro -------------------------------------------------------
 const municipios = ref([])
 const carregandoMunicipios = ref(false)
 const erroMunicipios = ref('')
+const restrito = ref(false) // analista com cidades definidas pelo gestor (US10)
 const erroContorno = ref('')
 const codIbge = ref('')
 const codImovel = ref('')
@@ -42,6 +55,12 @@ const total = ref(0)
 const pagina = ref(1)
 const carregando = ref(false)
 const erro = ref('')
+
+// --- Indicadores da página (US11.T22, sob demanda) --------------
+const resumoIndicadores = ref({})
+const carregandoIndicadoresPagina = ref(false)
+const avisoIndicadoresPagina = ref('')
+let pedidoIndicadoresPagina = 0
 
 // --- Mapa ---------------------------------------------------------
 const mapaRef = ref(null)
@@ -71,6 +90,106 @@ let pedidoMapa = null // AbortController do pedido do mapa em andamento
 let ultimaCaixa = null // última área visível avisada pelo mapa
 let esperaBusca = null // setTimeout da busca por código
 
+// --- Painel flutuante (filtro, tabela e indicadores por cima do mapa) ---
+// Tela larga (lg+): coluna à esquerda. Celular: gaveta que sobe de baixo,
+// começa fechada para o mapa aparecer inteiro.
+const consultaTelaLarga = window.matchMedia('(min-width: 1024px)')
+const telaLarga = ref(consultaTelaLarga.matches)
+const painelAberto = ref(telaLarga.value)
+const painelRef = ref(null)
+const indicadoresRef = ref(null)
+const areaRef = ref(null) // a área do mapa: o painel não sai dela
+const tamanhoPainel = ref({ largura: 0, altura: 0 })
+const tamanhoArea = ref({ largura: 0, altura: 0 })
+let observadorPainel = null
+
+function aoMudarLargura(e) {
+  telaLarga.value = e.matches
+}
+
+// --- Arrastar o painel (só na tela larga) ----------------------------
+// O usuário arrasta pela barra "Filtro e imóveis". Um clique sem mover
+// continua abrindo/recolhendo; se moveu mais que LIMIAR px, foi arrasto.
+const MARGEM = 16
+const LIMIAR = 4
+// Começa abaixo do botão "Voltar ao painel" (que fica no canto de cima, à esquerda).
+const posicao = ref({ x: MARGEM, y: 64 })
+let arrasto = null // { inicioX, inicioY, origemX, origemY, moveu }
+let ignorarClique = false
+
+/** Mantém o painel dentro da área do mapa (a barra sempre visível). */
+function limitar({ x, y }) {
+  const { largura: lp } = tamanhoPainel.value
+  const { largura: la, altura: aa } = tamanhoArea.value
+  const BARRA = 48 // altura da barra de arrastar, que nunca pode sumir
+  return {
+    x: Math.min(Math.max(x, 8), Math.max(8, la - lp - 8)),
+    y: Math.min(Math.max(y, 8), Math.max(8, aa - BARRA - 8)),
+  }
+}
+
+function iniciarArrasto(e) {
+  if (!telaLarga.value || e.button !== 0) return
+  arrasto = {
+    inicioX: e.clientX,
+    inicioY: e.clientY,
+    origemX: posicao.value.x,
+    origemY: posicao.value.y,
+    moveu: false,
+  }
+  e.currentTarget.setPointerCapture(e.pointerId)
+}
+
+function arrastar(e) {
+  if (!arrasto) return
+  const dx = e.clientX - arrasto.inicioX
+  const dy = e.clientY - arrasto.inicioY
+  if (!arrasto.moveu && Math.hypot(dx, dy) < LIMIAR) return
+  arrasto.moveu = true
+  posicao.value = limitar({ x: arrasto.origemX + dx, y: arrasto.origemY + dy })
+}
+
+function soltarArrasto() {
+  if (!arrasto) return
+  ignorarClique = arrasto.moveu
+  arrasto = null
+}
+
+function alternarPainel() {
+  if (ignorarClique) {
+    ignorarClique = false
+    return
+  }
+  painelAberto.value = !painelAberto.value
+}
+
+/** Na tela larga o painel fica onde o usuário deixou; no celular, a gaveta. */
+const estiloPainel = computed(() => {
+  if (!telaLarga.value) return {}
+  const { x, y } = posicao.value
+  return { left: `${x}px`, top: `${y}px`, maxHeight: `calc(100% - ${y + MARGEM}px)` }
+})
+
+/**
+ * Quanto do mapa o painel cobre: o enquadramento do mapa desconta isso.
+ * Na tela larga depende de onde ele está: metade esquerda → folga à
+ * esquerda; metade direita → folga à direita.
+ */
+const folga = computed(() => {
+  const { largura, altura } = tamanhoPainel.value
+  if (!largura) return {}
+  if (!telaLarga.value) return { baixo: altura + 8 }
+  const { x } = posicao.value
+  const larguraArea = tamanhoArea.value.largura
+  if (x + largura / 2 <= larguraArea / 2) return { esquerda: x + largura + 8 }
+  return { direita: larguraArea - x + 8 }
+})
+
+// Se a janela encolher, o painel volta para dentro da área.
+watch([tamanhoArea, tamanhoPainel], () => {
+  if (telaLarga.value) posicao.value = limitar(posicao.value)
+})
+
 const nomeMunicipio = computed(
   () => municipios.value.find((m) => m.codIbge === codIbge.value)?.nome ?? '',
 )
@@ -82,6 +201,11 @@ const legendaFocos = computed(() => {
   return `Foco de calor · INPE ${f.satelite} · ${f.janelaMeses} meses`
 })
 
+/** Indica se algum imóvel carregado tem status ambiental classificado (para legenda). */
+const temStatusNoMapa = computed(() =>
+  Object.values(resumoIndicadores.value).some((r) => Boolean(r?.status)),
+)
+
 // Vai o nome do IBGE como está ("Maringá"): o back-end compara por igualdade,
 // sem diferenciar acento nem maiúsculas, com o "Maringa" que o CAR grava.
 // Vale para a tabela e para o mapa.
@@ -91,7 +215,14 @@ async function carregarMunicipios() {
   carregandoMunicipios.value = true
   erroMunicipios.value = ''
   try {
-    municipios.value = await listarMunicipios(UF)
+    // A lista já vem só com as cidades liberadas; o acesso diz se há restrição.
+    const [lista, acesso] = await Promise.all([
+      listarMunicipios(UF),
+      buscarMeuAcesso().catch(() => ({ todas: true })),
+    ])
+    municipios.value = lista
+    restrito.value = !acesso.todas
+    if (restrito.value && lista.length === 1 && !codIbge.value) codIbge.value = lista[0].codIbge
   } catch (e) {
     erroMunicipios.value = `Não deu para carregar a lista de municípios: ${e.message}`
   } finally {
@@ -108,6 +239,10 @@ async function carregarMunicipios() {
  */
 async function carregarPagina() {
   const consulta = ++consultaAtual
+  ++pedidoIndicadoresPagina
+  resumoIndicadores.value = {}
+  avisoIndicadoresPagina.value = ''
+  carregandoIndicadoresPagina.value = false
   carregando.value = true
   erro.value = ''
   try {
@@ -125,6 +260,65 @@ async function carregarPagina() {
     if (consulta === consultaAtual) erro.value = e.message
   } finally {
     if (consulta === consultaAtual) carregando.value = false
+  }
+}
+
+function consolidarStatus(resultados) {
+  let piorStatus = null
+  let maiorPrioridade = 0
+  let calculados = 0
+
+  for (const item of resultados) {
+    if (!item?.status) continue
+    calculados += 1
+    const prioridade = PRIORIDADE_STATUS[item.status] ?? 0
+    if (prioridade > maiorPrioridade) {
+      maiorPrioridade = prioridade
+      piorStatus = item.status
+    }
+  }
+
+  return {
+    status: piorStatus,
+    quantidade: resultados.length,
+    calculados,
+  }
+}
+
+async function carregarIndicadoresPagina() {
+  if (!itens.value.length) return
+  const pedido = ++pedidoIndicadoresPagina
+  carregandoIndicadoresPagina.value = true
+  avisoIndicadoresPagina.value = ''
+
+  try {
+    const ativos = (await listarIndicadores()).filter((i) => i.active)
+    if (pedido !== pedidoIndicadoresPagina) return
+
+    if (!ativos.length) {
+      resumoIndicadores.value = {}
+      avisoIndicadoresPagina.value = 'Nenhum indicador cadastrado ativo.'
+      return
+    }
+
+    const resultadosPorImovel = await Promise.all(
+      itens.value.map(async (imovel) => {
+        const res = await Promise.all(
+          ativos.map((indicador) => buscarResultado(indicador.code, imovel.codImovel)),
+        )
+        return [imovel.codImovel, consolidarStatus(res)]
+      }),
+    )
+
+    if (pedido !== pedidoIndicadoresPagina) return
+    resumoIndicadores.value = Object.fromEntries(resultadosPorImovel)
+    avisoIndicadoresPagina.value = `${ativos.length} indicador(es) consultado(s) na página.`
+  } catch (e) {
+    if (pedido === pedidoIndicadoresPagina) {
+      avisoIndicadoresPagina.value = e.message || 'Não deu para carregar os indicadores.'
+    }
+  } finally {
+    if (pedido === pedidoIndicadoresPagina) carregandoIndicadoresPagina.value = false
   }
 }
 
@@ -270,6 +464,7 @@ function alternarSelecao(codigo) {
 
   selecionadoCod.value = codigo
   carregarIndicadores(codigo)
+  mostrarIndicadores()
   buscarImovel(codigo)
     .then((imovel) => {
       if (pedido === selecaoAtual) destaque.value = imovel
@@ -278,6 +473,13 @@ function alternarSelecao(codigo) {
       if (pedido === selecaoAtual) erroMapa.value = e.message
     })
   return true
+}
+
+/** Abre o painel (se estiver fechado) e rola até o card de indicadores. */
+async function mostrarIndicadores() {
+  painelAberto.value = true
+  await nextTick()
+  indicadoresRef.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
 // Da tabela: o item traz a caixa envolvente, então o mapa vai até o imóvel.
@@ -312,9 +514,52 @@ watch(codIbge, (cod) => {
 onMounted(() => {
   carregarMunicipios()
   carregarPagina()
+
+  consultaTelaLarga.addEventListener('change', aoMudarLargura)
+  // Um observador para os dois: o painel e a área do mapa.
+  observadorPainel = new ResizeObserver((entradas) => {
+    for (const { target } of entradas) {
+      const { width, height } = target.getBoundingClientRect()
+      const tamanho = { largura: width, altura: height }
+      if (target === painelRef.value) tamanhoPainel.value = tamanho
+      else tamanhoArea.value = tamanho
+    }
+  })
+  observadorPainel.observe(painelRef.value)
+  observadorPainel.observe(areaRef.value)
 })
 
+// "De onde veio este número?": origem do imóvel e comparação com a versão anterior.
+const origem = ref({ aberto: false, indicador: 'IRL', dados: null, comparacao: null, carregando: false, comparando: false, erro: '' })
+
+async function abrirOrigem(indicador) {
+  const cod = selecionadoCod.value
+  origem.value = { aberto: true, indicador, dados: null, comparacao: null, carregando: true, comparando: false, erro: '' }
+  try {
+    const [dados, comparacao] = await Promise.all([buscarOrigem(cod), compararVersoes(cod)])
+    if (cod !== selecionadoCod.value) return
+    origem.value = { ...origem.value, dados, comparacao }
+  } catch (e) {
+    origem.value.erro = e.message
+  } finally {
+    origem.value.carregando = false
+  }
+}
+
+async function compararOutras(par) {
+  origem.value.comparando = true
+  try {
+    origem.value.comparacao = await compararVersoes(selecionadoCod.value, par)
+  } catch (e) {
+    origem.value.erro = e.message
+  } finally {
+    origem.value.comparando = false
+  }
+}
+
 onBeforeUnmount(() => {
+  consultaTelaLarga.removeEventListener('change', aoMudarLargura)
+  observadorPainel?.disconnect()
   pedidoMapa?.abort()
   pedidoFocos?.abort()
   clearTimeout(esperaBusca)
@@ -322,48 +567,125 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <BaseCard>
-      <FiltroTerritorio
-        v-model:cod-ibge="codIbge"
-        v-model:cod-imovel="codImovel"
-        v-model:situacao="situacao"
-        :municipios="municipios"
-        :carregando="carregandoMunicipios"
-        :erro="erroMunicipios || erroContorno"
-      />
-    </BaseCard>
+  <!-- O mapa ocupa a tela inteira; o resto flutua por cima, como no Google Maps. -->
+  <div ref="areaRef" class="absolute inset-0">
+    <MapaImoveis
+      ref="mapaRef"
+      class="absolute inset-0"
+      :camada="camada"
+      :carregando="carregandoMapa"
+      :erro="erroMapa"
+      :municipio="municipio"
+      :destaque="destaque"
+      :filtrado="!!nomeFiltro || !!situacao"
+      :focos="focos"
+      :resumo-indicadores="resumoIndicadores"
+      :folga="folga"
+      @area="aoMoverMapa"
+      @selecionar="selecionarDoMapa"
+    />
 
-    <div class="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
-      <BaseCard class="lg:col-span-7" titulo="Mapa">
-        <template #acoes>
-          <div class="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 pt-0.5 text-[11px] text-slate-400">
-            <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 rounded-sm border border-cyan-400 bg-cyan-400/30" />
-              Imóvel rural
-            </span>
-            <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 rounded-full bg-orange-500" />
-              {{ legendaFocos }}
-            </span>
-          </div>
-        </template>
-        <MapaImoveis
-          ref="mapaRef"
-          :camada="camada"
-          :carregando="carregandoMapa"
-          :erro="erroMapa"
-          :municipio="municipio"
-          :destaque="destaque"
-          :filtrado="!!nomeFiltro || !!situacao"
-          :focos="focos"
-          @area="aoMoverMapa"
-          @selecionar="selecionarDoMapa"
-        />
-      </BaseCard>
+    <!-- Voltar ao Dashboard: canto superior esquerdo (o zoom fica embaixo, à direita) -->
+    <RouterLink
+      :to="{ name: 'dashboard' }"
+      class="glass-mapa absolute left-4 top-4 z-20 inline-flex items-center gap-1.5 px-3 py-2 text-[12.5px]
+             font-medium text-slate-200 transition hover:text-cyan-300"
+    >
+      <AppIcon nome="voltar" class="h-3.5 w-3.5" />
+      Voltar ao painel
+    </RouterLink>
 
-      <div class="space-y-5 lg:col-span-5">
-        <BaseCard titulo="Imóveis" :contagem="total ? formatarNumero(total) : ''">
+    <!-- Legenda: canto superior direito -->
+    <div
+      class="glass-mapa pointer-events-none absolute right-4 top-4 z-20 flex max-w-[calc(100%-2rem)] flex-col
+             gap-1 px-3 py-2 text-[11px] text-slate-400 sm:flex-row sm:flex-wrap sm:gap-x-4"
+    >
+      <span class="flex items-center gap-1.5">
+        <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-cyan-400 bg-cyan-400/30" />
+        Imóvel rural
+      </span>
+      <template v-if="temStatusNoMapa">
+        <span class="flex items-center gap-1.5">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-emerald-500 bg-emerald-500/30" />
+          Conforme
+        </span>
+        <span class="flex items-center gap-1.5">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-amber-500 bg-amber-500/30" />
+          Alerta
+        </span>
+        <span class="flex items-center gap-1.5">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-rose-500 bg-rose-500/30" />
+          Crítico
+        </span>
+      </template>
+      <span class="flex items-center gap-1.5">
+        <span class="h-2.5 w-2.5 shrink-0 rounded-full bg-orange-500" />
+        {{ legendaFocos }}
+      </span>
+    </div>
+
+    <!-- Painel: arrastável pelo mapa (lg+) ou gaveta embaixo (celular).
+         Na tela larga, left/top vêm de estiloPainel. -->
+    <aside
+      ref="painelRef"
+      :class="[
+        'glass-mapa absolute z-20 flex flex-col overflow-hidden',
+        'lg:bottom-auto lg:right-auto lg:w-[460px]',
+        painelAberto ? 'inset-x-2 bottom-2 max-h-[65%]' : 'bottom-2 left-2',
+      ]"
+      :style="estiloPainel"
+      aria-label="Filtro e lista de imóveis"
+    >
+      <button
+        type="button"
+        :class="[
+          'flex shrink-0 select-none items-center justify-between gap-3 px-4 py-3 text-left',
+          'text-sm font-semibold text-slate-100 transition hover:text-white lg:cursor-move lg:touch-none',
+          painelAberto && 'border-b border-slate-800',
+        ]"
+        :aria-expanded="painelAberto"
+        title="Arraste para mover o painel; clique para abrir ou recolher"
+        @pointerdown="iniciarArrasto"
+        @pointermove="arrastar"
+        @pointerup="soltarArrasto"
+        @pointercancel="soltarArrasto"
+        @click="alternarPainel"
+      >
+        <span class="flex items-center gap-2">
+          <!-- Pegador: seis pontinhos, só onde dá para arrastar -->
+          <svg class="hidden h-4 w-4 text-slate-500 lg:block" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <circle cx="6" cy="4" r="1.2" /><circle cx="10" cy="4" r="1.2" />
+            <circle cx="6" cy="8" r="1.2" /><circle cx="10" cy="8" r="1.2" />
+            <circle cx="6" cy="12" r="1.2" /><circle cx="10" cy="12" r="1.2" />
+          </svg>
+          Filtro e imóveis
+        </span>
+        <span class="text-xs font-normal text-slate-400">{{ painelAberto ? 'Recolher' : 'Abrir' }}</span>
+      </button>
+
+      <!-- overscroll-contain: no Android, chegar ao topo da gaveta e puxar
+           não dispara o "puxar para recarregar" da página inteira. -->
+      <div
+        v-show="painelAberto"
+        class="min-h-0 flex-1 divide-y divide-slate-800 overflow-y-auto overscroll-contain"
+      >
+        <section class="p-4">
+          <FiltroTerritorio
+            v-model:cod-ibge="codIbge"
+            v-model:cod-imovel="codImovel"
+            v-model:situacao="situacao"
+            :municipios="municipios"
+            :restrito="restrito"
+            :carregando="carregandoMunicipios"
+            :erro="erroMunicipios || erroContorno"
+          />
+        </section>
+
+        <section class="p-4">
+          <h2 class="mb-3 flex items-baseline gap-2 text-sm font-semibold text-slate-100">
+            Imóveis
+            <span v-if="total" class="text-xs font-normal text-slate-500">{{ formatarNumero(total) }}</span>
+          </h2>
           <TabelaImoveis
             :itens="itens"
             :total="total"
@@ -372,27 +694,51 @@ onBeforeUnmount(() => {
             :carregando="carregando"
             :erro="erro"
             :selecionado-cod="selecionadoCod"
+            :resumo-indicadores="resumoIndicadores"
+            :carregando-indicadores="carregandoIndicadoresPagina"
+            :aviso-indicadores="avisoIndicadoresPagina"
             @selecionar="selecionarDaTabela"
             @mudar-pagina="mudarPagina"
             @tentar-novamente="carregarPagina"
+            @carregar-indicadores="carregarIndicadoresPagina"
           />
-        </BaseCard>
+        </section>
 
-        <BaseCard titulo="Indicadores do imóvel">
-          <template v-if="selecionadoCod" #subtitulo>
-            <p class="truncate font-mono text-[11.5px] text-cyan-400">{{ selecionadoCod }}</p>
-          </template>
-          <CardIndicadores
-            :cod-imovel="selecionadoCod"
-            :indicadores="indicadores"
-            :carregando="carregandoIndicadores"
-            :erro="erroIndicadores"
-            :calculando="calculando"
-            @calcular="calcular"
-            @tentar-novamente="carregarIndicadores(selecionadoCod)"
-          />
-        </BaseCard>
+        <section ref="indicadoresRef" class="p-4">
+          <h2 class="text-sm font-semibold text-slate-100">Indicadores do imóvel</h2>
+          <p v-if="selecionadoCod" class="mt-0.5 truncate font-mono text-[11.5px] text-cyan-400">{{ selecionadoCod }}</p>
+          <div class="mt-3">
+            <CardIndicadores
+              :cod-imovel="selecionadoCod"
+              :indicadores="indicadores"
+              :carregando="carregandoIndicadores"
+              :erro="erroIndicadores"
+              :calculando="calculando"
+              @calcular="calcular"
+              @tentar-novamente="carregarIndicadores(selecionadoCod)"
+              @origem="abrirOrigem"
+            />
+            <CardIndicadoresCadastrados :cod-imovel="selecionadoCod" />
+            <GraficosIndicadores
+              :resumo-indicadores="resumoIndicadores"
+              :indicadores-imovel="indicadores"
+              :cod-imovel="selecionadoCod"
+            />
+          </div>
+        </section>
       </div>
-    </div>
+    </aside>
+    <ModalOrigem
+      :aberto="origem.aberto"
+      :cod-imovel="selecionadoCod ?? ''"
+      :indicador="origem.indicador"
+      :origem="origem.dados"
+      :comparacao="origem.comparacao"
+      :carregando="origem.carregando"
+      :comparando="origem.comparando"
+      :erro="origem.erro"
+      @fechar="origem.aberto = false"
+      @comparar="compararOutras"
+    />
   </div>
 </template>

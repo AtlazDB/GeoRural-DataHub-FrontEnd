@@ -2,15 +2,18 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BaseButton from '@/components/BaseButton.vue'
+import { useConfirmacao } from '@/composables/useConfirmacao'
 import BaseGaveta from '@/components/BaseGaveta.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import FonteList from '@/components/fontes/FonteList.vue'
+import GrupoFontesModal from '@/components/fontes/GrupoFontesModal.vue'
 import FonteForm from '@/components/fontes/FonteForm.vue'
 import FonteUpload from '@/components/fontes/FonteUpload.vue'
 import ArquivoList from '@/components/fontes/ArquivoList.vue'
 import RecebimentoLink from '@/components/fontes/RecebimentoLink.vue'
 import MapeamentoPainel from '@/components/mapeamento/MapeamentoPainel.vue'
+import VersoesFonte from '@/components/fontes/VersoesFonte.vue'
 import { listarColunas } from '@/services/mapeamentosService'
 import {
   listarFontes,
@@ -19,10 +22,14 @@ import {
   enviarArquivo,
   testarLink,
   executarColeta,
+  alterarAtivaFonte,
+  listarGrupos,
 } from '@/services/fontesService'
-import { processarArquivo, excluirArquivo } from '@/services/arquivosService'
-import { processaAoReceber } from '@/utils/processamento'
-import { formatarNumero, formatarDataHora } from '@/utils/formato'
+import { processarArquivo, cancelarArquivo, excluirArquivo } from '@/services/arquivosService'
+import { listarVersoesDaFonte } from '@/services/versoesService'
+import { ehProcessavel } from '@/utils/processamento'
+import { formatarDataHora } from '@/utils/formato'
+import { usePermissoes } from '@/composables/usePermissoes'
 
 /**
  * ==================================================================
@@ -41,22 +48,28 @@ import { formatarNumero, formatarDataHora } from '@/utils/formato'
  */
 
 const route = useRoute()
+const { confirmar } = useConfirmacao()
 const router = useRouter()
+const { podeOperar } = usePermissoes()
 
 // --- Estado do mapeamento -----------------------------------------
 const novasPorFonte = ref({})
 
 // --- Lista: filtro por como os dados chegam e busca --------------
-const filtro = ref('todas') // todas | LINK | MANUAL
+const filtro = ref('todas') // todas | LINK | MANUAL | INATIVAS
 const busca = ref('')
 
 const filtros = [
   { valor: 'todas', rotulo: 'Todas' },
+  { valor: 'ATIVAS', rotulo: 'Ativas' },
   { valor: 'LINK', rotulo: 'Coleta automática' },
   { valor: 'MANUAL', rotulo: 'Upload' },
+  { valor: 'INATIVAS', rotulo: 'Desativadas' },
 ]
 
 function doFiltro(fonte, valor) {
+  if (valor === 'INATIVAS') return fonte.status === 'inativa'
+  if (valor === 'ATIVAS') return fonte.status !== 'inativa'
   return valor === 'todas' || (valor === 'LINK') === (fonte.modalidade === 'LINK')
 }
 
@@ -66,15 +79,18 @@ function contar(valor) {
 
 const fontesVisiveis = computed(() => {
   const termo = busca.value.trim().toLowerCase()
-  return fontes.value.filter(
-    (f) =>
-      doFiltro(f, filtro.value) &&
-      (!termo || `${f.nome} ${f.sigla} ${f.orgao}`.toLowerCase().includes(termo)),
-  )
+  return fontes.value
+    .filter(
+      (f) =>
+        doFiltro(f, filtro.value) &&
+        (!termo || `${f.nome} ${f.sigla} ${f.orgao}`.toLowerCase().includes(termo)),
+    )
+    // Desativadas vão para o fim; entre as do mesmo grupo, a ordem de antes não muda.
+    .sort((a, b) => Number(a.status === 'inativa') - Number(b.status === 'inativa'))
 })
 
 // --- Página da fonte: abas ----------------------------------------
-const ABAS = ['recebimento', 'arquivos', 'mapeamento']
+const ABAS = ['recebimento', 'arquivos', 'mapeamento', 'versoes']
 const aba = computed(() => (ABAS.includes(route.query.aba) ? route.query.aba : 'recebimento'))
 
 function irParaAba(nova) {
@@ -85,7 +101,31 @@ const abas = computed(() => [
   { id: 'recebimento', rotulo: 'Recebimento' },
   { id: 'arquivos', rotulo: 'Arquivos recebidos', contagem: selecionada.value?.arquivos?.length ?? 0 },
   { id: 'mapeamento', rotulo: 'Mapeamento', semRegra: novasPorFonte.value[selecionada.value?.id] ?? 0 },
+  { id: 'versoes', rotulo: 'Versões' },
 ])
+
+// --- Aba Versões ----------------------------------------------------
+const versoes = ref([])
+const carregandoVersoes = ref(false)
+const erroVersoes = ref('')
+let pedidoVersoes = 0
+
+async function carregarVersoes() {
+  const fonteId = selecionada.value?.id
+  if (!fonteId) return
+  const meu = ++pedidoVersoes
+  carregandoVersoes.value = true
+  erroVersoes.value = ''
+  try {
+    const lista = await listarVersoesDaFonte(fonteId)
+    if (meu === pedidoVersoes) versoes.value = lista
+  } catch (e) {
+    if (meu === pedidoVersoes) erroVersoes.value = e.message
+  } finally {
+    if (meu === pedidoVersoes) carregandoVersoes.value = false
+  }
+}
+
 
 // O que trava a fonte aberta: arquivo esperando o mapeamento. Coluna sem regra
 // sozinha não é alerta: muitas ficam sem mapeamento de propósito (objectid, Shape__Area)
@@ -121,6 +161,15 @@ const formRef = ref(null)
 
 // --- Estado do upload ---------------------------------------------
 const selecionada = ref(null)
+
+// Aba Versões: carrega ao abrir a aba ou trocar de fonte com ela aberta.
+watch(
+  () => [aba.value, selecionada.value?.id],
+  ([abaAtual]) => {
+    if (abaAtual === 'versoes') carregarVersoes()
+  },
+)
+
 const enviando = ref(false)
 const progresso = ref(0)
 const uploadRef = ref(null)
@@ -130,12 +179,14 @@ const testando = ref(false)
 const teste = ref(null) // a resposta do último "Testar link"
 const erroTeste = ref('')
 const executandoId = ref(null) // fonte com coleta em andamento
+const alternandoId = ref(null) // fonte com a chave de ativar sendo trocada
 
 // --- Estado do processamento --------------------------------------
 const emProcessamento = ref([]) // ids mandados processar que ainda não responderam
 const naFilaAirflow = ref({}) // id → arquivo: processamento entregue ao Airflow, ainda sem resultado
 const resultados = ref({}) // id do arquivo → { tipo, texto } do último processamento
 const excluindo = ref([]) // ids com exclusão em andamento
+const cancelando = ref([]) // ids com interrupção em andamento
 let consulta = null // o setInterval da consulta periódica
 let atualizando = false
 
@@ -188,6 +239,8 @@ async function carregar() {
   erro.value = ''
   try {
     fontes.value = await listarFontes()
+    // Grupos só organizam a tela: se falharem, a lista aparece sem pastas.
+    grupos.value = await listarGrupos().catch(() => [])
         recarregarNovas()
   } catch (e) {
     erro.value = e.message
@@ -209,6 +262,61 @@ async function carregar() {
  *      e chame avisar('ok', 'Fonte cadastrada.')
  *   e) no catch, avisar('erro', e.message)
  */
+/** Abre o formulário vazio, para cadastrar uma fonte nova (ex.: camadas dos indicadores: UC, TI, PRODES). */
+// --- Grupos de fontes: "pastas" na lista (só organização visual) ----
+const grupos = ref([]) // [{ id, nome, fonteIds }]
+const gruposAbertos = ref([]) // ids das pastas abertas
+const modalGrupo = ref({ aberto: false, grupo: null })
+
+const gruposVisiveis = computed(() => {
+  const semFiltro = !busca.value.trim() && filtro.value === 'todas'
+  return grupos.value
+    .map((g) => {
+      const membros = fontesVisiveis.value.filter((f) => f.grupoId === g.id)
+      return {
+        ...g,
+        fontes: membros,
+        inativas: membros.filter((f) => f.status === 'inativa').length,
+        aguardando: membros.filter((f) => f.arquivos?.some((a) => a.status === 'AGUARDANDO_MAPEAMENTO')).length,
+      }
+    })
+    .filter((g) => g.fontes.length || semFiltro) // pasta vazia só aparece sem filtro
+})
+
+const fontesSemGrupo = computed(() => {
+  const ids = new Set(grupos.value.map((g) => g.id))
+  return fontesVisiveis.value.filter((f) => !f.grupoId || !ids.has(f.grupoId))
+})
+
+// Com busca, as pastas abrem sozinhas para mostrar o que achou.
+function grupoAberto(id) {
+  return !!busca.value.trim() || gruposAbertos.value.includes(id)
+}
+
+function alternarGrupo(id) {
+  gruposAbertos.value = gruposAbertos.value.includes(id)
+    ? gruposAbertos.value.filter((x) => x !== id)
+    : [...gruposAbertos.value, id]
+}
+
+function abrirModalGrupo(grupo = null) {
+  modalGrupo.value = { aberto: true, grupo }
+}
+
+async function aoSalvarGrupo(salvo) {
+  modalGrupo.value = { aberto: false, grupo: null }
+  if (salvo && !gruposAbertos.value.includes(salvo.id)) gruposAbertos.value = [...gruposAbertos.value, salvo.id]
+  avisar('ok', salvo ? `Grupo ${salvo.nome} salvo.` : 'Grupo excluído. As fontes ficaram sem grupo.')
+  await carregar()
+}
+
+function novaFonte() {
+  limparTeste()
+  emEdicao.value = null
+  formRef.value?.limpar()
+  mostrandoForm.value = true
+}
+
 function editarFonte(fonte) {
   limparTeste()
   emEdicao.value = fonte
@@ -276,28 +384,42 @@ function testarLinkDaFonte() {
 /**
  * "Executar agora" de uma fonte por link.
  *
- * Com o Airflow ligado, o back só põe o pedido na fila (SOLICITADA, 202): a
- * coleta pagina o serviço e pode levar horas. A fonte fica "coletando" e a
- * consulta periódica mostra o andamento (fonte.ultimaColetaMensagem); quando
- * o arquivo chega na zona bruta, o próprio Airflow o processa.
- *
- * Sem o Airflow, o back baixa o link na hora. Daí em diante o arquivo segue
- * igual a um upload, inclusive o processamento automático (ver enviar()). Se
- * o conteúdo for igual ao da última coleta, nada é gravado e o aviso diz
- * "sem mudança".
+ * O back só dispara a DAG no Airflow (SOLICITADA, 202): a coleta
+ * pagina o serviço e pode levar horas. A fonte fica "coletando" e a consulta
+ * periódica mostra o andamento (fonte.ultimaColetaMensagem); quando o arquivo
+ * chega na zona bruta, o próprio Airflow o processa.
  */
 async function executar(fonte) {
   executandoId.value = fonte.id
   try {
-    const { resultado, mensagem, arquivo } = await executarColeta(fonte.id)
-    avisar('ok', resultado === 'SEM_MUDANCA' ? `Sem mudança: ${mensagem}` : mensagem)
-    selecionada.value = fonte // mostra os arquivos da fonte que acabou de ser coletada
+    const { mensagem } = await executarColeta(fonte.id)
+    avisar('ok', mensagem)
+    selecionada.value = fonte // mostra o andamento da fonte que acabou de ser pedida
     await atualizar()
-    if (resultado === 'RECEBIDO' && processaAoReceber(fonte, arquivo)) processar(arquivo)
   } catch (e) {
     avisar('erro', e.message)
   } finally {
     executandoId.value = null
+  }
+}
+
+/**
+ * Chave do card (e botão "Ativar" da página da fonte): liga ou desliga a fonte.
+ * Desativada, ela não recebe arquivo nem coleta; os dados já carregados continuam.
+ */
+async function alternarAtiva(fonte) {
+  const ativar = fonte.status === 'inativa'
+  alternandoId.value = fonte.id
+  try {
+    const atualizada = await alterarAtivaFonte(fonte.id, ativar)
+    const i = fontes.value.findIndex((f) => f.id === atualizada.id)
+    if (i !== -1) fontes.value[i] = atualizada
+    if (selecionada.value?.id === atualizada.id) selecionada.value = atualizada
+    avisar('ok', ativar ? `Fonte ${atualizada.sigla} ativada.` : `Fonte ${atualizada.sigla} desativada.`)
+  } catch (e) {
+    avisar('erro', e.message)
+  } finally {
+    alternandoId.value = null
   }
 }
 
@@ -347,9 +469,9 @@ async function enviar(arquivo) {
     uploadRef.value.limpar()
     avisar('ok', 'Arquivo enviado.')
 
-    // Sem await de propósito: o aviso acima aparece na hora e o
-    // processamento segue em segundo plano (ver processar()).
-    if (processaAoReceber(fonte, recebido)) processar(recebido)
+    // Nada roda sozinho no Airflow: é processar() que dispara o processamento
+    // e põe a linha do arquivo no acompanhamento. Sem await de propósito.
+    if (ehProcessavel(recebido)) processar(recebido)
   } catch (e) {
     avisar('erro', e.message)
   } finally {
@@ -359,43 +481,36 @@ async function enviar(arquivo) {
 }
 
 /**
- * Manda o back-end processar um arquivo do CAR (.zip).
- *
- * A chamada é síncrona e pode levar muitos minutos, então quem chama esta
- * função NÃO usa await — a tela continua respondendo. O andamento aparece
- * pela consulta periódica (logo abaixo); o resultado final chega aqui.
- *
- * Atenção: REJEITADO volta com HTTP 200, então não cai no catch. O catch
- * só pega erro de requisição (400, 404, 409, servidor fora do ar...).
+ * Dispara o processamento de um arquivo no Airflow (o back reserva, dispara e
+ * responde na hora). O processamento corre fora desta chamada: o andamento e o
+ * resultado chegam pela consulta periódica (ver acompanharFilaAirflow()). O catch
+ * pega erro de requisição (404, 409 já em processamento, 503 Airflow fora do ar...).
  */
 async function processar(arquivo) {
   const id = arquivo.id
   if (emProcessamento.value.includes(id)) return
+  // Reprocessar um arquivo já processado troca os dados atuais da fonte pelos da nova leitura.
+  if (
+    arquivo.status === 'PROCESSADO' &&
+    !(await confirmar({
+      titulo: 'Reprocessar arquivo?',
+      destaque: arquivo.nome,
+      mensagem: 'O arquivo será lido de novo com o mapeamento atual.',
+      detalhe: 'Os dados desta fonte serão substituídos pelos da nova leitura. Não precisa enviar o arquivo outra vez.',
+      confirmar: 'Reprocessar',
+      icone: 'atualizar',
+    }))
+  )
+    return
 
   emProcessamento.value.push(id)
   delete resultados.value[id]
   try {
-    const resposta = await processarArquivo(id)
-        if (resposta.status === 'PROCESSADO') {
-      concluir(
-        arquivo,
-        'ok',
-        `Processado: ${formatarNumero(resposta.registrosLidos)} lidos · ` +
-          `${formatarNumero(resposta.registrosValidos)} válidos · ` +
-          `${formatarNumero(resposta.registrosInvalidos)} inválidos.`,
-      )
-    } else if (resposta.status === 'REJEITADO') {
-      concluir(arquivo, 'erro', `Rejeitado: ${resposta.mensagemErro}`)
-    } else if (resposta.status === 'AGUARDANDO_MAPEAMENTO') {
-      concluir(arquivo, 'erro', 'Há colunas sem mapeamento. Mapeie pelo botão # e processe de novo.')
-    } else {
-      // 202: o processamento foi aceito e corre fora desta chamada. O resultado
-      // chega pela consulta periódica (ver atualizar()).
-      naFilaAirflow.value[id] = arquivo
-      resultados.value[id] = {
-        tipo: 'ok',
-        texto: 'Na fila do Airflow: o processamento começa em até 2 minutos.',
-      }
+    await processarArquivo(id)
+    naFilaAirflow.value[id] = arquivo
+    resultados.value[id] = {
+      tipo: 'ok',
+      texto: 'Enviado ao Airflow.',
     }
   } catch (e) {
     concluir(arquivo, 'erro', e.message)
@@ -403,6 +518,25 @@ async function processar(arquivo) {
     emProcessamento.value = emProcessamento.value.filter((x) => x !== id)
     atualizar()
   }
+}
+
+/**
+ * Arquivos da fonte que pararam esperando o mapeamento. Na aba Mapeamento,
+ * depois de mapear as colunas, o usuário reprocessa todos de uma vez, sem
+ * precisar voltar à aba Arquivos recebidos e clicar arquivo por arquivo.
+ */
+const aguardandoMapeamento = computed(
+  () =>
+    selecionada.value?.arquivos?.filter(
+      (a) => a.status === 'AGUARDANDO_MAPEAMENTO' && ehProcessavel(a),
+    ) ?? [],
+)
+
+function reprocessarAguardando() {
+  const arquivos = [...aguardandoMapeamento.value]
+  // Leva para a aba dos arquivos, onde aparece a barra de progresso de cada um.
+  irParaAba('arquivos')
+  arquivos.forEach((a) => processar(a))
 }
 
 // O resultado fica na linha do arquivo e também sobe como aviso, para
@@ -494,14 +628,53 @@ function pararConsulta() {
 watch(haProcessando, (sim) => (sim ? iniciarConsulta() : pararConsulta()))
 
 /**
+ * Interrompe o processamento em andamento. Não há pausa: o Airflow encerra a
+ * execução e, para continuar, o usuário processa de novo (recomeça do início,
+ * com o mesmo mapeamento). Erros (409, 503) chegam prontos pelo http.js.
+ */
+async function cancelar(arquivo) {
+  const confirmado = await confirmar({
+    titulo: 'Interromper o processamento?',
+    destaque: arquivo.nome,
+    mensagem: 'Para continuar depois, clique em Processar: ele recomeça do início, com o mesmo mapeamento.',
+    confirmar: 'Interromper',
+    icone: 'parar',
+  })
+  if (!confirmado || cancelando.value.includes(arquivo.id)) return
+
+  cancelando.value.push(arquivo.id)
+  try {
+    await cancelarArquivo(arquivo.id)
+    // Sai da fila antes da próxima consulta, senão ela mostraria "Rejeitado no processamento".
+    delete naFilaAirflow.value[arquivo.id]
+    resultados.value[arquivo.id] = {
+      tipo: 'erro',
+      texto: 'Processamento interrompido. Clique em Processar para recomeçar.',
+    }
+    avisar('ok', `${arquivo.nome}: processamento interrompido.`)
+    await atualizar()
+  } catch (e) {
+    avisar('erro', e.message)
+  } finally {
+    cancelando.value = cancelando.value.filter((x) => x !== arquivo.id)
+  }
+}
+
+/**
  * Exclui um arquivo REJEITADO — do catálogo e da zona bruta, sem volta.
  * Se o back-end recusar (409: não está rejeitado, ou já gerou versão de
  * dados), a mensagem chega pronta pelo interceptor do http.js.
  */
 async function excluir(arquivo) {
-  const confirmado = window.confirm(
-    `Excluir "${arquivo.nome}"?\n\nO arquivo é apagado do catálogo e da zona bruta. Não dá para desfazer.`,
-  )
+  const confirmado = await confirmar({
+    titulo: 'Excluir arquivo?',
+    destaque: arquivo.nome,
+    mensagem: 'O arquivo é apagado do catálogo e da zona bruta.',
+    detalhe: 'Não dá para desfazer.',
+    confirmar: 'Excluir',
+    tom: 'perigo',
+    icone: 'lixeira',
+  })
   if (!confirmado || excluindo.value.includes(arquivo.id)) return
 
   excluindo.value.push(arquivo.id)
@@ -574,14 +747,19 @@ onBeforeUnmount(() => {
           <b class="font-medium text-slate-200">coleta automática</b>, quando o sistema busca no link
           do órgão.
         </p>
-        <!-- As fontes do projeto já estão cadastradas: o botão fica à vista, mas inativo.
-             Para mudar como uma fonte chega (link ou upload), use "Editar" na página dela. -->
-        <span title="As fontes do projeto já estão cadastradas. Para mudar uma delas, abra a fonte e use Editar.">
-          <BaseButton tamanho="sm" disabled>
+        <!-- Fonte nova: as camadas dos indicadores cadastrados (UC, TI, PRODES, APP...) chegam
+             como fontes. Só para quem opera (T25). Para mudar como uma fonte já existente chega,
+             use "Editar" na página dela. -->
+        <div v-if="podeOperar" class="flex gap-2">
+          <BaseButton variante="secundario" tamanho="sm" @click="abrirModalGrupo()">
+            <AppIcon nome="mais" traco="2.4" class="h-3 w-3" />
+            Novo grupo
+          </BaseButton>
+          <BaseButton tamanho="sm" @click="novaFonte">
             <AppIcon nome="mais" traco="2.4" class="h-3 w-3" />
             Nova fonte
           </BaseButton>
-        </span>
+        </div>
       </div>
 
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -609,14 +787,77 @@ onBeforeUnmount(() => {
         />
       </div>
 
+      <!-- Grupos: pastas que abrem e fecham, com os cards dentro (só organização visual) -->
+      <div v-if="!carregando && !erro && gruposVisiveis.length" class="space-y-3">
+        <section v-for="g in gruposVisiveis" :key="g.id" class="glass">
+          <div class="flex items-center gap-3 px-4 py-3">
+            <button
+              type="button"
+              class="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+              :aria-expanded="grupoAberto(g.id)"
+              @click="alternarGrupo(g.id)"
+            >
+              <AppIcon
+                nome="seta"
+                :class="['h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform', grupoAberto(g.id) && 'rotate-90']"
+              />
+              <AppIcon nome="camadas" class="h-4 w-4 shrink-0 text-cyan-400" />
+              <span class="truncate text-sm font-semibold text-slate-100">{{ g.nome }}</span>
+              <span class="shrink-0 text-xs text-slate-500">
+                {{ g.fontes.length }} {{ g.fontes.length === 1 ? 'fonte' : 'fontes' }}
+                <template v-if="g.inativas"> · {{ g.inativas }} desativada(s)</template>
+              </span>
+              <span v-if="g.aguardando" class="flex shrink-0 items-center gap-1.5 text-xs text-amber-300">
+                <span class="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                {{ g.aguardando }} aguardando mapeamento
+              </span>
+            </button>
+            <BaseButton v-if="podeOperar" variante="fantasma" tamanho="sm" class="shrink-0" @click="abrirModalGrupo(g)">
+              Editar grupo
+            </BaseButton>
+          </div>
+          <div v-if="grupoAberto(g.id)" class="border-t border-slate-800 p-4">
+            <p v-if="!g.fontes.length" class="text-sm text-slate-500">
+              Grupo vazio. Use "Editar grupo" para colocar fontes nele.
+            </p>
+            <FonteList
+              v-else
+              :fontes="g.fontes"
+              :novas="novasPorFonte"
+              :filtrada="true"
+              :pode-operar="podeOperar"
+              :alternando-id="alternandoId"
+              @selecionar="selecionar"
+              @alternar-ativa="alternarAtiva"
+            />
+          </div>
+        </section>
+        <p v-if="fontesSemGrupo.length" class="pt-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+          Fontes sem grupo
+        </p>
+      </div>
+
       <FonteList
-        :fontes="fontesVisiveis"
+        v-if="carregando || erro || fontesSemGrupo.length || !gruposVisiveis.length"
+        :fontes="fontesSemGrupo"
         :carregando="carregando"
         :erro="erro"
         :novas="novasPorFonte"
         :filtrada="fontes.length > 0"
+        :pode-operar="podeOperar"
+        :alternando-id="alternandoId"
         @selecionar="selecionar"
+        @alternar-ativa="alternarAtiva"
         @tentar-novamente="carregar"
+      />
+
+      <GrupoFontesModal
+        :aberto="modalGrupo.aberto"
+        :grupo="modalGrupo.grupo"
+        :fontes="fontes"
+        :grupos="grupos"
+        @fechar="modalGrupo = { aberto: false, grupo: null }"
+        @salvo="aoSalvarGrupo"
       />
     </template>
 
@@ -652,7 +893,7 @@ onBeforeUnmount(() => {
             </span>
             <StatusBadge :status="selecionada.status" />
             <span class="text-[12px] text-slate-500">· {{ selecionada.orgao }}</span>
-            <BaseButton class="ml-auto" variante="fantasma" tamanho="sm" @click="editarFonte(selecionada)">
+            <BaseButton v-if="podeOperar" class="ml-auto" variante="fantasma" tamanho="sm" @click="editarFonte(selecionada)">
               <AppIcon nome="lapis" class="h-3.5 w-3.5" />
               Editar
             </BaseButton>
@@ -701,8 +942,29 @@ onBeforeUnmount(() => {
 
         <!-- Aba: Recebimento -->
         <template v-if="aba === 'recebimento'">
+          <!-- Fonte desativada: nada de upload nem coleta até religar -->
+          <section
+            v-if="selecionada.status === 'inativa'"
+            class="glass flex flex-wrap items-center gap-3 p-5"
+          >
+            <div class="min-w-0 flex-1">
+              <h2 class="text-sm font-semibold text-white">Fonte desativada</h2>
+              <p class="mt-1 max-w-2xl text-[13px] text-slate-400">
+                Esta fonte não recebe arquivos nem coletas enquanto estiver desativada. Os dados que ela
+                já trouxe continuam valendo.
+              </p>
+            </div>
+            <BaseButton
+              v-if="podeOperar"
+              tamanho="sm"
+              :disabled="alternandoId === selecionada.id"
+              @click="alternarAtiva(selecionada)"
+            >
+              Ativar fonte
+            </BaseButton>
+          </section>
           <RecebimentoLink
-            v-if="selecionada.modalidade === 'LINK'"
+            v-else-if="selecionada.modalidade === 'LINK'"
             :fonte="selecionada"
             :executando="executandoId === selecionada.id"
             :testando="testando"
@@ -711,7 +973,7 @@ onBeforeUnmount(() => {
             @executar="executar(selecionada)"
             @testar="testarLinkDaFonte"
           />
-          <section v-else class="glass space-y-4 p-5">
+          <section v-else-if="podeOperar" class="glass space-y-4 p-5">
             <div>
               <h2 class="text-sm font-semibold text-white">Enviar arquivo</h2>
               <p class="mt-1 max-w-2xl text-[13px] text-slate-400">
@@ -727,6 +989,13 @@ onBeforeUnmount(() => {
               @enviar="enviar"
             />
           </section>
+          <section v-else class="glass p-5">
+            <h2 class="text-sm font-semibold text-white">Recebimento por upload</h2>
+            <p class="mt-1 max-w-2xl text-[13px] text-slate-400">
+              O envio de arquivos é feito pelo operador de dados. Veja os arquivos já recebidos na aba
+              Arquivos recebidos.
+            </p>
+          </section>
         </template>
 
         <!-- Aba: Arquivos recebidos -->
@@ -736,9 +1005,21 @@ onBeforeUnmount(() => {
             :em-processamento="emProcessamento"
             :resultados="resultados"
             :excluindo="excluindo"
+            :cancelando="cancelando"
             @processar="processar"
+            @cancelar="cancelar"
             @excluir="excluir"
             @mapear="irParaAba('mapeamento')"
+          />
+        </section>
+
+        <!-- Aba: Versões -->
+        <section v-else-if="aba === 'versoes'" class="glass p-5">
+          <VersoesFonte
+            :versoes="versoes"
+            :carregando="carregandoVersoes"
+            :erro="erroVersoes"
+            @tentar-novamente="carregarVersoes"
           />
         </section>
 
@@ -750,6 +1031,27 @@ onBeforeUnmount(() => {
             cumprir</b>. É o que permite receber dados de órgãos diferentes, cada um com seu formato.
             Registro que não cumpre uma regra vai para a quarentena.
           </p>
+
+          <!-- Arquivos esperando o mapeamento: reprocessa todos depois de mapear -->
+          <div
+            v-if="podeOperar && aguardandoMapeamento.length"
+            class="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3"
+          >
+            <AppIcon nome="arquivo" traco="1.8" class="h-4 w-4 shrink-0 text-amber-300" />
+            <p class="min-w-0 flex-1 text-[13px] text-amber-100">
+              {{
+                aguardandoMapeamento.length === 1
+                  ? '1 arquivo está aguardando o mapeamento.'
+                  : `${aguardandoMapeamento.length} arquivos estão aguardando o mapeamento.`
+              }}
+              Terminou de mapear as colunas? Reprocesse para carregar os dados.
+            </p>
+            <BaseButton tamanho="sm" class="shrink-0" @click="reprocessarAguardando">
+              <AppIcon nome="executar" traco="2.2" class="h-3 w-3" />
+              Reprocessar
+            </BaseButton>
+          </div>
+
           <MapeamentoPainel
             :fonte="selecionada"
             :ativo="aba === 'mapeamento'"

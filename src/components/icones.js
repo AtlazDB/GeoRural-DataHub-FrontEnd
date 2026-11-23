@@ -30,9 +30,19 @@ export const icones = {
   ],
   atualizar: ['M21 12a9 9 0 1 1-3-6.7', 'M21 4v6h-6'],
   executar: ['M7 5v14l11-7L7 5z'],
+  parar: ['M6 6h12v12H6z'],
   lixeira: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12', 'M9 7V4h6v3'],
   mapa: ['M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z', 'M9 4v14', 'M15 6v14'],
   tabela: ['M4 4h16v16H4z', 'M4 10h16', 'M4 15h16', 'M10 10v10'],
+  // Dashboard: quatro blocos de tamanhos diferentes, como um painel de cartões.
+  painel: ['M4 4h7v9H4z', 'M13 4h7v5h-7z', 'M13 11h7v9h-7z', 'M4 15h7v5H4z'],
+  // Usuários e perfis: duas pessoas (cabeça e ombros).
+  usuarios: [
+    'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+    'M2 21v-1a6 6 0 0 1 6-6h2a6 6 0 0 1 6 6v1',
+    'M16 3.1a4 4 0 0 1 0 7.8',
+    'M18 14a6 6 0 0 1 4 6v1',
+  ],
   rastro: [
     'M8.5 6a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z',
     'M8.5 18a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z',

@@ -18,6 +18,7 @@ import {
   descartar,
 } from '@/services/quarentenaService'
 import { formatarNumero } from '@/utils/formato'
+import { usePermissoes } from '@/composables/usePermissoes'
 import {
   FAMILIAS,
   TIPOS_ERRO,
@@ -29,6 +30,9 @@ import {
 } from '@/utils/quarentena'
 
 const TAMANHO = 20
+
+// Só quem opera os dados analisa, corrige e descarta; os demais perfis só consultam.
+const { podeOperar } = usePermissoes()
 
 const metricas = ref({})
 const registros = ref([])
@@ -70,6 +74,10 @@ const tiposPorFamilia = computed(() =>
 )
 
 const temFiltro = computed(() => Object.values(filtros).some(Boolean))
+
+// O filtro de fonte lista só as ativas. Os registros de uma fonte desativada continuam na
+// quarentena e aparecem em "Todas as fontes".
+const fontesAtivas = computed(() => fontes.value.filter((f) => f.status !== 'inativa'))
 
 function mostrarAviso(texto, tipo = 'ok') {
   aviso.value = { texto, tipo }
@@ -343,7 +351,7 @@ onBeforeUnmount(() => {
           <label class="label" for="q-fonte">Fonte</label>
           <select id="q-fonte" v-model="filtros.fonteId" class="input">
             <option value="">Todas as fontes</option>
-            <option v-for="f in fontes" :key="f.id" :value="f.id">{{ f.nome }}</option>
+            <option v-for="f in fontesAtivas" :key="f.id" :value="f.id">{{ f.nome }}</option>
           </select>
         </div>
         <div>
@@ -402,7 +410,7 @@ onBeforeUnmount(() => {
                 </span>
               </td>
               <td class="px-3 py-2.5 text-right align-top">
-                <BaseButton variante="fantasma" tamanho="sm" @click="abrir(r.id)">Analisar</BaseButton>
+                <BaseButton variante="fantasma" tamanho="sm" @click="abrir(r.id)">{{ podeOperar ? 'Analisar' : 'Ver' }}</BaseButton>
               </td>
             </tr>
             <tr v-if="!registros.length && !carregando">
@@ -473,9 +481,13 @@ onBeforeUnmount(() => {
 
       <template #rodape>
         <p v-if="gaveta.erro" class="mr-auto max-w-md text-[12px] text-rose-300">{{ gaveta.erro }}</p>
-        <template v-if="encerrado">
+        <template v-if="encerrado || !podeOperar">
           <p v-if="!gaveta.erro" class="mr-auto text-[12px] text-slate-500">
-            Registro encerrado. O histórico fica guardado para auditoria.
+            {{
+              encerrado
+                ? 'Registro encerrado. O histórico fica guardado para auditoria.'
+                : 'Somente leitura: a análise e a correção são feitas pelo operador de dados.'
+            }}
           </p>
           <BaseButton variante="fantasma" @click="fechar">Fechar</BaseButton>
         </template>

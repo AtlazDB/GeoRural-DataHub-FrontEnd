@@ -104,7 +104,7 @@ defineExpose({ limpar })
           Arraste o arquivo ou clique para selecionar
         </p>
         <p class="mt-1 text-[11px] text-slate-500">
-           ZIP, GeoJSON &middot; at&eacute; 500 MB
+           ZIP, GeoJSON, CSV &middot; at&eacute; 500 MB
         </p>
       </template>
     </div>

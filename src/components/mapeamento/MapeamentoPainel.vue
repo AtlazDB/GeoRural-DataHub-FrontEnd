@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
+import { useConfirmacao } from '@/composables/useConfirmacao'
 import ColunasDetectadas from '@/components/mapeamento/ColunasDetectadas.vue'
 import MapeamentosTabela from '@/components/mapeamento/MapeamentosTabela.vue'
 import RegraForm from '@/components/mapeamento/RegraForm.vue'
@@ -143,11 +144,18 @@ async function salvar(corpo) {
   }
 }
 
+const { confirmar } = useConfirmacao()
+
 /** Remove um mapeamento: a coluna volta a ser "nova". */
 async function remover(mapeamento) {
-  const confirmado = window.confirm(
-    `Remover o mapeamento de "${mapeamento.colunaNome}"?\n\nA coluna volta a ficar sem destino e sem regras.`,
-  )
+  const confirmado = await confirmar({
+    titulo: 'Remover o mapeamento?',
+    destaque: mapeamento.colunaNome,
+    mensagem: 'A coluna volta a ficar sem destino e sem regras.',
+    confirmar: 'Remover',
+    tom: 'perigo',
+    icone: 'lixeira',
+  })
   if (!confirmado || removendo.value.includes(mapeamento.id)) return
 
   removendo.value.push(mapeamento.id)
@@ -168,8 +176,12 @@ async function remover(mapeamento) {
 
 // Recarrega toda vez que aparece (ou troca de fonte aparecendo), para nunca
 // mostrar dados de outra fonte. Esconder zera o formulário.
+// Duas fontes separadas, e não um getter que devolve [ativo, id]: o getter criava
+// um array novo a cada vez, e a ImportacaoView troca o objeto `fonte` a cada 3 s
+// enquanto há coleta ou processamento. O painel recarregava (piscando) e zerava
+// o formulário no meio do preenchimento. Assim só dispara quando ativo ou id mudam.
 watch(
-  () => [props.ativo, props.fonte?.id],
+  [() => props.ativo, () => props.fonte?.id],
   ([ativo]) => {
     emEdicao.value = null
     regraEmEdicao.value = null

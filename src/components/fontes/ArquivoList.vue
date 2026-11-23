@@ -1,8 +1,10 @@
 <script setup>
+import { computed } from 'vue'
 import BaseButton from '@/components/BaseButton.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import { formatarTamanho, formatarDataHora } from '@/utils/formato'
 import { ehProcessavel } from '@/utils/processamento'
+import { usePermissoes } from '@/composables/usePermissoes'
 
 /**
  * Arquivos recebidos de uma fonte, com o status do processamento.
@@ -24,9 +26,13 @@ const props = defineProps({
   resultados: { type: Object, default: () => ({}) },
   /** ids com exclusão em andamento (o botão fica em "carregando") */
   excluindo: { type: Array, default: () => [] },
+  /** ids com interrupção em andamento (o botão fica em "carregando") */
+  cancelando: { type: Array, default: () => [] },
 })
 
-defineEmits(['processar', 'excluir', 'mapear'])
+defineEmits(['processar', 'cancelar', 'excluir', 'mapear'])
+
+const { podeOperar } = usePermissoes()
 
 const etiquetas = {
   AGUARDANDO_MAPEAMENTO: {
@@ -51,11 +57,48 @@ function statusDe(arquivo) {
   return props.emProcessamento.includes(arquivo.id) ? 'PROCESSANDO' : arquivo.status
 }
 
+/**
+ * Reprocessar: só o arquivo PROCESSADO mais recente da fonte. É ele que está valendo; reprocessar
+ * um mais antigo trocaria os dados atuais por dados velhos. Serve para quando o mapeamento mudou
+ * (ex.: uma coluna nova) e os dados precisam ser lidos de novo, sem subir o arquivo outra vez.
+ */
+const ultimoProcessadoId = computed(() => {
+  const processados = (props.fonte.arquivos ?? []).filter((a) => a.status === 'PROCESSADO')
+  if (!processados.length) return null
+  const quando = (a) => new Date(a.enviadoEm ?? 0).getTime() || 0
+  return processados.reduce((m, a) => (quando(a) > quando(m) || (quando(a) === quando(m) && a.id > m.id) ? a : m)).id
+})
+
+function podeReprocessar(arquivo) {
+  return ehProcessavel(arquivo) && statusDe(arquivo) === 'PROCESSADO' && arquivo.id === ultimoProcessadoId.value
+}
+
 function podeProcessar(arquivo) {
   return (
-    ehProcessavel(props.fonte, arquivo) &&
+    ehProcessavel(arquivo) &&
     ['RECEBIDO', 'AGUARDANDO_MAPEAMENTO', 'REJEITADO'].includes(statusDe(arquivo))
   )
+}
+
+// Etapas que o DAG grava em progressStep (gravacao.Progress, no Airflow).
+const etapas = {
+  DOWNLOAD: 'Baixando o arquivo',
+  EXTRACAO: 'Extraindo o arquivo',
+  LEITURA: 'Lendo os registros',
+  GRAVACAO: 'Validando e gravando',
+  CONCLUSAO: 'Concluindo',
+}
+
+/**
+ * Barra de progresso do arquivo em processamento. Antes de o DAG gravar o
+ * primeiro progresso (progress nulo), o arquivo ainda está na fila do Airflow:
+ * a barra fica sem % e só pulsa.
+ */
+function progressoDe(arquivo) {
+  if (statusDe(arquivo) !== 'PROCESSANDO') return null
+  const pct = arquivo.progress
+  if (pct == null) return { pct: null, texto: 'Na fila do Airflow…' }
+  return { pct, texto: etapas[arquivo.progressStep] ?? 'Processando' }
 }
 
 // O back-end também recusa (409) rejeitado que já gerou versão de dados —
@@ -98,7 +141,7 @@ function podeExcluir(arquivo) {
         </span>
 
         <BaseButton
-          v-if="statusDe(arquivo) === 'AGUARDANDO_MAPEAMENTO'"
+          v-if="podeOperar && statusDe(arquivo) === 'AGUARDANDO_MAPEAMENTO'"
           variante="secundario"
           tamanho="sm"
           class="shrink-0"
@@ -108,7 +151,7 @@ function podeExcluir(arquivo) {
         </BaseButton>
 
         <BaseButton
-          v-if="podeProcessar(arquivo)"
+          v-if="podeOperar && podeProcessar(arquivo)"
           variante="secundario"
           tamanho="sm"
           class="shrink-0"
@@ -118,8 +161,34 @@ function podeExcluir(arquivo) {
           Processar
         </BaseButton>
 
+        <!-- Mapeamento mudou depois de processar (ex.: coluna nova): lê o mesmo arquivo de novo. -->
         <BaseButton
-          v-if="podeExcluir(arquivo)"
+          v-if="podeOperar && podeReprocessar(arquivo)"
+          variante="secundario"
+          tamanho="sm"
+          class="shrink-0"
+          title="Lê o arquivo de novo com o mapeamento atual"
+          @click="$emit('processar', arquivo)"
+        >
+          <AppIcon nome="executar" traco="2.2" class="h-3 w-3" />
+          Reprocessar
+        </BaseButton>
+
+        <!-- Só depois que o back gravou PROCESSANDO (arquivo.status): antes disso não há execução para interromper. -->
+        <BaseButton
+          v-if="podeOperar && arquivo.status === 'PROCESSANDO'"
+          variante="fantasma"
+          tamanho="sm"
+          class="shrink-0 text-amber-300 hover:text-amber-200"
+          :carregando="cancelando.includes(arquivo.id)"
+          @click="$emit('cancelar', arquivo)"
+        >
+          <AppIcon v-if="!cancelando.includes(arquivo.id)" nome="parar" traco="2" class="h-3 w-3" />
+          Interromper
+        </BaseButton>
+
+        <BaseButton
+          v-if="podeOperar && podeExcluir(arquivo)"
           variante="fantasma"
           tamanho="sm"
           class="shrink-0 text-rose-300 hover:text-rose-200"
@@ -131,8 +200,33 @@ function podeExcluir(arquivo) {
         </BaseButton>
       </div>
 
+      <!-- Barra de progresso: ocupa o lugar da mensagem enquanto processa -->
+      <div v-if="progressoDe(arquivo)" class="mt-2 space-y-1 pl-7">
+        <div class="flex items-center justify-between text-[11px]">
+          <span class="text-slate-400">{{ progressoDe(arquivo).texto }}</span>
+          <span v-if="progressoDe(arquivo).pct != null" class="font-mono text-cyan-400">
+            {{ progressoDe(arquivo).pct }}%
+          </span>
+        </div>
+        <div
+          class="h-1.5 overflow-hidden rounded-full bg-slate-800"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-valuenow="progressoDe(arquivo).pct ?? undefined"
+          :aria-label="`Processamento de ${arquivo.nome}`"
+        >
+          <div
+            v-if="progressoDe(arquivo).pct != null"
+            class="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-[width] duration-700 ease-out"
+            :style="{ width: progressoDe(arquivo).pct + '%' }"
+          />
+          <div v-else class="h-full w-full animate-pulse rounded-full bg-cyan-500/30" />
+        </div>
+      </div>
+
       <p
-        v-if="resultados[arquivo.id]"
+        v-else-if="resultados[arquivo.id]"
         :class="[
           'mt-1.5 pl-7 text-xs',
           resultados[arquivo.id].tipo === 'ok' ? 'text-emerald-300/90' : 'text-rose-300/90',
