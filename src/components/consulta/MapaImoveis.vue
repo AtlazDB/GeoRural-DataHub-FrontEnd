@@ -6,6 +6,7 @@ import { formatarArea, formatarDataHora, formatarSituacao } from '@/utils/format
 // servicodados.ibge.gov.br/api/v3/malhas/estados/41?formato=application/vnd.geo+json
 import parana from '@/assets/parana.json'
 import { useTema } from '@/composables/useTema'
+import { listarCamadas, buscarCamadaNoMapa } from '@/services/camadasService'
 
 /**
  * Mapa dos imóveis rurais, carregado por área visível.
@@ -108,6 +109,24 @@ let contornoEstado = null
 let observador = null // ResizeObserver: o mapa acompanha o tamanho da tela
 let limitesParana = null
 
+// --- Camadas extras (Reserva Legal e fontes do insumo genérico) ---------------
+// O próprio mapa busca: cada camada ligada pede GET /camadas/:id/mapa da área
+// visível a cada movimento, como os imóveis. Fica desligada até o usuário marcar.
+const LIMITE_CAMADA = 2000
+// Cores fixas, distintas das dos imóveis (ciano) e dos focos (laranja).
+const CORES_CAMADA = ['#22c55e', '#a855f7', '#eab308', '#ec4899', '#3b82f6', '#84cc16', '#f97316', '#14b8a6', '#ef4444']
+const camadasDisponiveis = ref([]) // [{ id, nome, tipo, sigla }]
+const camadasLigadas = ref([]) // ids
+const estadoCamada = ref({}) // { [id]: 'carregando' | 'parcial' | 'erro' | null }
+const painelCamadas = ref(false)
+const camadasExtras = new Map() // id → L.geoJSON
+const pedidosCamada = new Map() // id → AbortController
+
+function corDaCamada(id) {
+  const i = camadasDisponiveis.value.findIndex((c) => c.id === id)
+  return CORES_CAMADA[(i < 0 ? 0 : i) % CORES_CAMADA.length]
+}
+
 const mensagem = computed(() => {
   if (!perto.value) return { tipo: 'info', texto: 'Aproxime o zoom para ver os imóveis' }
   if (props.erro) return { tipo: 'erro', texto: props.erro }
@@ -173,6 +192,12 @@ onMounted(() => {
   }).addTo(mapa)
 
   mapa.on('moveend', avisarArea)
+  mapa.on('moveend', atualizarCamadas)
+
+  // Sem permissão ou sem dados, a lista vem vazia e o botão nem aparece.
+  listarCamadas()
+    .then((lista) => (camadasDisponiveis.value = Array.isArray(lista) ? lista : []))
+    .catch(() => (camadasDisponiveis.value = []))
 
   desenharMunicipio()
   desenharImoveis()
@@ -182,6 +207,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  for (const pedido of pedidosCamada.values()) pedido.abort()
   observador?.disconnect()
   mapa?.remove()
   mapa = null
@@ -299,8 +325,99 @@ function desenharImoveis() {
   // No canvas, quem é desenhado por último fica por cima: o destaque não pode
   // sumir embaixo dos imóveis que acabaram de chegar, e os focos ficam acima
   // de tudo — senão o preenchimento do destaque esconde os pontos dentro dele.
+  // As camadas extras ficam acima dos imóveis (o usuário ligou para ver) e
+  // abaixo do destaque e dos focos.
+  for (const camada of camadasExtras.values()) camada.bringToFront()
   camadaDestaque.bringToFront()
   camadaFocos.bringToFront()
+}
+
+/** Liga ou desliga uma camada extra. */
+function alternarCamada(id) {
+  if (camadasLigadas.value.includes(id)) {
+    camadasLigadas.value = camadasLigadas.value.filter((x) => x !== id)
+    pedidosCamada.get(id)?.abort()
+    pedidosCamada.delete(id)
+    camadasExtras.get(id)?.remove()
+    camadasExtras.delete(id)
+    estadoCamada.value = { ...estadoCamada.value, [id]: null }
+    return
+  }
+  camadasLigadas.value = [...camadasLigadas.value, id]
+  const cor = corDaCamada(id)
+  const nome = camadasDisponiveis.value.find((c) => c.id === id)?.nome ?? id
+  const camada = L.geoJSON(null, {
+    style: { color: cor, weight: 1.2, fillColor: cor, fillOpacity: 0.25 },
+    onEachFeature: (feature, poligono) => poligono.bindPopup(() => montarPopupCamada(nome, feature.properties)),
+  }).addTo(mapa)
+  camadasExtras.set(id, camada)
+  buscarCamada(id)
+}
+
+function atualizarCamadas() {
+  for (const id of camadasLigadas.value) buscarCamada(id)
+}
+
+async function buscarCamada(id) {
+  const camada = camadasExtras.get(id)
+  if (!mapa || !camada) return
+  pedidosCamada.get(id)?.abort()
+  if (mapa.getZoom() < ZOOM_MINIMO) {
+    camada.clearLayers()
+    estadoCamada.value = { ...estadoCamada.value, [id]: null }
+    return
+  }
+  const caixa = mapa.getBounds()
+  const area = {
+    minLon: limitar(caixa.getWest(), -180, 180),
+    minLat: limitar(caixa.getSouth(), -90, 90),
+    maxLon: limitar(caixa.getEast(), -180, 180),
+    maxLat: limitar(caixa.getNorth(), -90, 90),
+  }
+  const pedido = new AbortController()
+  pedidosCamada.set(id, pedido)
+  estadoCamada.value = { ...estadoCamada.value, [id]: 'carregando' }
+  try {
+    const dados = await buscarCamadaNoMapa(id, area, { limite: LIMITE_CAMADA, signal: pedido.signal })
+    if (pedido.signal.aborted || camadasExtras.get(id) !== camada) return
+    camada.clearLayers()
+    camada.addData(dados)
+    camadaDestaque.bringToFront()
+    camadaFocos.bringToFront()
+    estadoCamada.value = { ...estadoCamada.value, [id]: dados.truncado ? 'parcial' : null }
+  } catch (e) {
+    if (pedido.signal.aborted || e?.original?.code === 'ERR_CANCELED') return
+    estadoCamada.value = { ...estadoCamada.value, [id]: 'erro' }
+  }
+}
+
+const ROTULOS_CAMADA = {
+  codImovel: 'Imóvel',
+  areaHa: 'Área',
+  situacao: 'Situação',
+  categoria: 'Categoria',
+  valor: 'Valor',
+  dataReferencia: 'Data',
+}
+
+// Como o popup do imóvel: nós do DOM, sem interpretar o texto das fontes como HTML.
+function montarPopupCamada(nome, propriedades) {
+  const caixa = document.createElement('div')
+  const titulo = document.createElement('strong')
+  titulo.textContent = nome
+  caixa.append(titulo)
+  for (const [chave, valor] of Object.entries(propriedades ?? {})) {
+    if (valor === null || valor === undefined || valor === '') continue
+    let texto = String(valor)
+    if (chave === 'areaHa') texto = formatarArea(valor)
+    else if (chave === 'situacao') texto = formatarSituacao(valor)
+    const linha = document.createElement('div')
+    const rotulo = document.createElement('strong')
+    rotulo.textContent = `${ROTULOS_CAMADA[chave] ?? chave}: `
+    linha.append(rotulo, texto)
+    caixa.append(linha)
+  }
+  return caixa
 }
 
 function desenharDestaque() {
@@ -386,6 +503,48 @@ defineExpose({ enquadrar })
       >
         {{ mensagem.texto }}
       </span>
+    </div>
+
+    <!-- Camadas extras: em baixo, à direita, acima dos botões de zoom -->
+    <div
+      v-if="camadasDisponiveis.length"
+      class="absolute z-10 flex flex-col items-end gap-2"
+      :style="{ right: `${(folga.direita ?? 0) + 10}px`, bottom: `${(folga.baixo ?? 0) + 92}px` }"
+    >
+      <div
+        v-if="painelCamadas"
+        class="max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-700 bg-slate-950/90 p-3
+               text-xs text-slate-200 shadow-lg backdrop-blur"
+      >
+        <p class="mb-2 font-semibold text-slate-100">Camadas</p>
+        <p v-if="!perto" class="mb-2 text-slate-400">Aproxime o zoom para ver as camadas ligadas.</p>
+        <label
+          v-for="c in camadasDisponiveis"
+          :key="c.id"
+          class="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-slate-800/60"
+        >
+          <input
+            type="checkbox"
+            class="accent-cyan-500"
+            :checked="camadasLigadas.includes(c.id)"
+            @change="alternarCamada(c.id)"
+          />
+          <span class="h-3 w-3 shrink-0 rounded-sm" :style="{ backgroundColor: corDaCamada(c.id) }" />
+          <span class="flex-1 leading-tight">{{ c.nome }}</span>
+          <span v-if="estadoCamada[c.id] === 'carregando'" class="text-slate-400">…</span>
+          <span v-else-if="estadoCamada[c.id] === 'parcial'" class="text-amber-300" title="Mostrando parte: aproxime o zoom">parcial</span>
+          <span v-else-if="estadoCamada[c.id] === 'erro'" class="text-red-300">erro</span>
+        </label>
+      </div>
+      <button
+        type="button"
+        class="rounded-full border border-slate-700 bg-slate-950/85 px-3 py-1.5 text-xs text-slate-200
+               shadow backdrop-blur hover:border-cyan-500/60"
+        :aria-expanded="painelCamadas"
+        @click="painelCamadas = !painelCamadas"
+      >
+        Camadas<span v-if="camadasLigadas.length"> ({{ camadasLigadas.length }})</span>
+      </button>
     </div>
   </div>
 </template>
