@@ -9,6 +9,7 @@ import Keycloak from 'keycloak-js'
  *   VITE_KEYCLOAK_REALM      padrão: georural
  *   VITE_KEYCLOAK_CLIENT_ID  padrão: georural-frontend
  *   VITE_AUTH_HABILITADO     "false" desliga o login (útil com o mock do back, que não valida token)
+ *   VITE_KEYCLOAK_LOGIN_HINT usuário que já vem preenchido no login. padrão: gestor; "" desliga
  *
  * O token fica só em memória: recarregar a página refaz o login silenciosamente (sessão do Keycloak).
  */
@@ -29,6 +30,15 @@ export async function iniciarAuth() {
     realm: import.meta.env.VITE_KEYCLOAK_REALM || 'georural',
     clientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'georural-frontend',
   })
+
+  // Demonstração: a tela de login já abre com o usuário preenchido (login_hint do Keycloak).
+  // Só o usuário: a senha continua sendo digitada. VITE_KEYCLOAK_LOGIN_HINT troca o usuário;
+  // vazio ("") desliga. O init do keycloak-js não repassa o loginHint, então ele vai pelo login().
+  const loginHint = import.meta.env.VITE_KEYCLOAK_LOGIN_HINT ?? 'gestor'
+  if (loginHint) {
+    const loginOriginal = keycloak.login.bind(keycloak)
+    keycloak.login = (opcoes = {}) => loginOriginal({ loginHint, ...opcoes })
+  }
 
   await keycloak.init({
     onLoad: 'login-required',
