@@ -280,3 +280,15 @@ html.claro .leaflet-tile-pane {
 .leaflet-container .leaflet-control-attribution a {
   @apply text-slate-400;
 }
+
+/* Celular: os créditos do mapa numa linha só, menores, na metade direita (a esquerda é do
+   botão "Filtro e imóveis"). O texto completo continua lá, cortado com reticências. */
+@media (max-width: 639px) {
+  .leaflet-container .leaflet-control-attribution {
+    max-width: calc(100vw - 13rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9px;
+  }
+}
