@@ -1,13 +1,39 @@
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { buscarDashboard } from '@/services/dashboardService'
-import { usuarioLogado } from '@/auth/keycloak'
+import { usuarioLogado, podeAcessar } from '@/auth/keycloak'
 import { listarFontes } from '@/services/fontesService'
 
 const dashboard = ref(null)
 const carregando = ref(true)
 const erro = ref('')
+
+// O back só libera /dashboard para o GESTOR; os outros perfis veem as anotações.
+const veDashboard = podeAcessar(['GESTOR'])
+
+// Anotações do usuário, salvas só neste navegador (uma por usuário logado).
+const chaveAnotacoes = `georural:anotacoes:${usuarioLogado()?.usuario ?? 'anonimo'}`
+
+function lerAnotacoes() {
+  try {
+    return localStorage.getItem(chaveAnotacoes) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+const anotacoes = ref(lerAnotacoes())
+const salvoEm = ref(null)
+
+watch(anotacoes, (texto) => {
+  try {
+    localStorage.setItem(chaveAnotacoes, texto)
+    salvoEm.value = new Date()
+  } catch {
+    // Navegador bloqueou o armazenamento: o texto continua na tela, só não fica salvo.
+  }
+})
 
 const primeiroNome = (usuarioLogado()?.nome ?? '').trim().split(/\s+/)[0]
 
@@ -187,7 +213,10 @@ function exportarCSV() {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-onMounted(carregarDashboard)
+onMounted(() => {
+  if (veDashboard) carregarDashboard()
+  else carregando.value = false
+})
 </script>
 
 <template>
@@ -200,7 +229,9 @@ onMounted(carregarDashboard)
           {{ saudacao }}
         </h2>
         <p class="mt-1 text-sm text-slate-400">
-          Acompanhe as fontes, execuções e processamento dos dados rurais.
+          {{ veDashboard
+            ? 'Acompanhe as fontes, execuções e processamento dos dados rurais.'
+            : 'Use o espaço abaixo para guardar suas anotações.' }}
         </p>
       </div>
 
@@ -219,9 +250,39 @@ onMounted(carregarDashboard)
       </button>
     </section>
 
+    <!-- Anotações: no lugar do dashboard para quem não é GESTOR -->
+    <section
+      v-if="!veDashboard"
+      class="rounded-xl border border-slate-800 bg-slate-900/60 p-5"
+    >
+      <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 class="font-semibold text-white">
+          Minhas anotações
+        </h2>
+        <p class="text-xs text-slate-500">
+          Ficam salvas só neste navegador.
+        </p>
+      </div>
+
+      <label for="anotacoes" class="sr-only">Minhas anotações</label>
+      <textarea
+        id="anotacoes"
+        v-model="anotacoes"
+        rows="10"
+        placeholder="Escreva aqui o que quiser lembrar: imóveis para revisar, dúvidas, pendências..."
+        class="w-full resize-y rounded-lg border border-slate-800 bg-slate-950/40 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-500/60 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+      />
+
+      <p class="mt-2 h-4 text-xs text-slate-500">
+        <template v-if="salvoEm">
+          Salvo às {{ salvoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) }}
+        </template>
+      </p>
+    </section>
+
     <!-- Carregamento -->
     <div
-      v-if="carregando"
+      v-else-if="carregando"
       class="rounded-xl border border-slate-800 bg-slate-900/50 p-8 text-center text-slate-400"
     >
       Carregando informações do dashboard...
