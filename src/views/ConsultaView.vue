@@ -96,6 +96,8 @@ let esperaBusca = null // setTimeout da busca por código
 const consultaTelaLarga = window.matchMedia('(min-width: 1024px)')
 const telaLarga = ref(consultaTelaLarga.matches)
 const painelAberto = ref(telaLarga.value)
+// Celular: a legenda fica recolhida num botão (aberta, cobria o "voltar" e parte do mapa).
+const legendaAberta = ref(false)
 const painelRef = ref(null)
 const indicadoresRef = ref(null)
 const areaRef = ref(null) // a área do mapa: o painel não sai dela
@@ -585,20 +587,41 @@ onBeforeUnmount(() => {
       @selecionar="selecionarDoMapa"
     />
 
-    <!-- Voltar ao Dashboard: canto superior esquerdo (o zoom fica embaixo, à direita) -->
+    <!-- Voltar ao Dashboard: canto superior esquerdo (o zoom fica embaixo, à direita).
+         No celular só a seta; o texto aparece a partir do sm. -->
     <RouterLink
       :to="{ name: 'dashboard' }"
-      class="glass-mapa absolute left-4 top-4 z-20 inline-flex items-center gap-1.5 px-3 py-2 text-[12.5px]
-             font-medium text-slate-200 transition hover:text-cyan-300"
+      class="glass-mapa absolute left-4 top-4 z-20 inline-flex items-center gap-1.5 p-2.5 text-[12.5px]
+             font-medium text-slate-200 transition hover:text-cyan-300 sm:px-3 sm:py-2"
+      aria-label="Voltar ao painel"
+      title="Voltar ao painel"
     >
-      <AppIcon nome="voltar" class="h-3.5 w-3.5" />
-      Voltar ao painel
+      <AppIcon nome="voltar" class="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+      <span class="hidden sm:inline">Voltar ao painel</span>
     </RouterLink>
 
-    <!-- Legenda: canto superior direito -->
+    <!-- Celular: botão que abre e fecha a legenda (a partir do sm ela fica sempre aberta). -->
+    <button
+      type="button"
+      class="glass-mapa absolute right-4 top-4 z-20 inline-flex items-center gap-1.5 px-3 py-2 text-[12px]
+             font-medium text-slate-200 sm:hidden"
+      :aria-expanded="legendaAberta"
+      @click="legendaAberta = !legendaAberta"
+    >
+      <span class="h-2.5 w-2.5 rounded-sm border border-cyan-400 bg-cyan-400/30" />
+      <span class="h-2.5 w-2.5 rounded-full bg-orange-500" />
+      Legenda
+    </button>
+
+    <!-- Legenda: canto superior direito. No celular, abaixo do botão e só quando aberta
+         (tocar nela fecha); a partir do sm, sempre visível e sem receber cliques. -->
     <div
-      class="glass-mapa pointer-events-none absolute right-4 top-4 z-20 flex max-w-[calc(100%-2rem)] flex-col
-             gap-1 px-3 py-2 text-[11px] text-slate-400 sm:flex-row sm:flex-wrap sm:gap-x-4"
+      :class="[
+        'glass-mapa absolute right-4 top-16 z-20 max-w-[calc(100%-2rem)] flex-col gap-1 px-3 py-2 text-[11px]',
+        'text-slate-400 sm:pointer-events-none sm:top-4 sm:flex sm:flex-row sm:flex-wrap sm:gap-x-4',
+        legendaAberta ? 'flex' : 'hidden',
+      ]"
+      @click="legendaAberta = false"
     >
       <span class="flex items-center gap-1.5">
         <span class="h-2.5 w-2.5 shrink-0 rounded-sm border border-cyan-400 bg-cyan-400/30" />
