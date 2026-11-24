@@ -3,10 +3,12 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import { useTema } from '@/composables/useTema'
+import { useMenu } from '@/composables/useMenu'
 import { perfis, sair, usuarioLogado } from '@/auth/keycloak'
 
 const route = useRoute()
 const { claro, alternar } = useTema()
+const { abrir: abrirMenu } = useMenu()
 
 const titulo = computed(() => route.meta.titulo ?? 'GeoRural DataHub')
 const trilha = computed(() => route.meta.grupo ?? '')
@@ -30,9 +32,21 @@ const perfilTexto = perfis()
     class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-950/30
            px-4 py-4 backdrop-blur-lg md:px-7"
   >
-    <div class="min-w-0">
-      <p class="mb-0.5 truncate text-[11px] text-slate-500">{{ trilha }}</p>
-      <h1 class="truncate font-display text-xl font-semibold tracking-tight text-white">{{ titulo }}</h1>
+    <div class="flex min-w-0 items-center gap-3">
+      <!-- Só no celular: o menu do sistema fica escondido e abre por aqui. -->
+      <button
+        type="button"
+        class="-ml-1 rounded-lg border border-slate-700 p-2 text-slate-300 transition hover:border-slate-500
+               hover:text-slate-100 md:hidden"
+        aria-label="Abrir menu"
+        @click="abrirMenu"
+      >
+        <AppIcon nome="menu" class="h-5 w-5" />
+      </button>
+      <div class="min-w-0">
+        <p class="mb-0.5 truncate text-[11px] text-slate-500">{{ trilha }}</p>
+        <h1 class="truncate font-display text-xl font-semibold tracking-tight text-white">{{ titulo }}</h1>
+      </div>
     </div>
 
     <div class="flex items-center gap-2">
