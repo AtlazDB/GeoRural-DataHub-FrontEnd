@@ -43,7 +43,7 @@ const props = defineProps({
   folga: { type: Object, default: () => ({}) },
 })
 
-const emit = defineEmits(['area', 'selecionar'])
+const emit = defineEmits(['area', 'selecionar', 'camadas'])
 
 const CENTRO_PARANA = [-24.89, -51.55]
 const ZOOM_PARANA = 7
@@ -119,6 +119,15 @@ const camadasDisponiveis = ref([]) // [{ id, nome, tipo, sigla }]
 const camadasLigadas = ref([]) // ids
 const estadoCamada = ref({}) // { [id]: 'carregando' | 'parcial' | 'erro' | null }
 const painelCamadas = ref(false)
+// Avisa a view quando a lista abre: no celular ela recolhe o painel de baixo (um aberto por vez).
+watch(painelCamadas, (aberto) => emit('camadas', aberto))
+// A lista abre para cima a partir do botão: a altura dela é o que sobra entre o botão e a
+// linha de cima (voltar e legenda), para nunca sair da tela.
+const alturaMapa = ref(0)
+const alturaListaCamadas = computed(() => {
+  const livre = alturaMapa.value - ((props.folga.baixo ?? 0) + 92) - 44 - 72
+  return Math.min(288, Math.max(160, livre))
+})
 const camadasExtras = new Map() // id → L.geoJSON
 const pedidosCamada = new Map() // id → AbortController
 
@@ -166,7 +175,9 @@ onMounted(() => {
 
   // O mapa ocupa a tela toda: se a janela (ou o menu) mudar de tamanho,
   // o Leaflet precisa recalcular o tamanho e o zoom mínimo.
+  alturaMapa.value = container.value.clientHeight
   observador = new ResizeObserver(() => {
+    alturaMapa.value = container.value?.clientHeight ?? 0
     if (!mapa) return
     mapa.invalidateSize()
     mapa.setMinZoom(mapa.getBoundsZoom(limitesParana))
@@ -493,7 +504,11 @@ function centralizar(geometria) {
   mapa.fitBounds(limites, { ...margens(24), maxZoom: mapa.getZoom() })
 }
 
-defineExpose({ enquadrar, centralizar })
+function fecharCamadas() {
+  painelCamadas.value = false
+}
+
+defineExpose({ enquadrar, centralizar, fecharCamadas })
 </script>
 
 <template>
@@ -528,7 +543,8 @@ defineExpose({ enquadrar, centralizar })
     >
       <div
         v-if="painelCamadas"
-        class="max-h-72 w-72 overflow-y-auto rounded-xl border border-slate-700 bg-slate-950/90 p-3
+        :style="{ maxHeight: `${alturaListaCamadas}px` }"
+        class="w-72 overflow-y-auto rounded-xl border border-slate-700 bg-slate-950/90 p-3
                text-xs text-slate-200 shadow-lg backdrop-blur"
       >
         <p class="mb-2 font-semibold text-slate-100">Camadas</p>

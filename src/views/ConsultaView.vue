@@ -188,6 +188,15 @@ const folga = computed(() => {
 })
 
 // Se a janela encolher, o painel volta para dentro da área.
+// Celular: um painel aberto por vez. Abrir as camadas recolhe o painel de baixo (senão a lista
+// abria acima dele e saía da tela); abrir o painel (ou tocar num imóvel) fecha as camadas.
+function aoAbrirCamadas(aberta) {
+  if (aberta && !telaLarga.value) painelAberto.value = false
+}
+watch(painelAberto, (aberto) => {
+  if (aberto && !telaLarga.value) mapaRef.value?.fecharCamadas()
+})
+
 watch([tamanhoArea, tamanhoPainel], () => {
   if (telaLarga.value) posicao.value = limitar(posicao.value)
 })
@@ -593,6 +602,7 @@ onBeforeUnmount(() => {
       :folga="folga"
       @area="aoMoverMapa"
       @selecionar="selecionarDoMapa"
+      @camadas="aoAbrirCamadas"
     />
 
     <!-- Voltar ao Dashboard: canto superior esquerdo (o zoom fica embaixo, à direita).
