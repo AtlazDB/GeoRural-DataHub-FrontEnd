@@ -1,7 +1,8 @@
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { buscarDashboard } from '@/services/dashboardService'
+import { buscarAnotacoes, salvarAnotacoes } from '@/services/anotacoesService'
 import { usuarioLogado, podeAcessar } from '@/auth/keycloak'
 import { listarFontes } from '@/services/fontesService'
 
@@ -9,31 +10,69 @@ const dashboard = ref(null)
 const carregando = ref(true)
 const erro = ref('')
 
-// O back só libera /dashboard para o GESTOR; os outros perfis veem as anotações.
-const veDashboard = podeAcessar(['GESTOR'])
+// O back libera /dashboard para GESTOR, OPERADOR_DADOS e AUDITOR (mesma regra do SecurityConfig).
+const veDashboard = podeAcessar(['GESTOR', 'OPERADOR_DADOS', 'AUDITOR'])
+// Gestor e Operador veem só o dashboard; o Auditor vê dashboard + anotações; o Analista, só anotações.
+const veAnotacoes = !podeAcessar(['GESTOR', 'OPERADOR_DADOS'])
 
-// Anotações do usuário, salvas só neste navegador (uma por usuário logado).
-const chaveAnotacoes = `georural:anotacoes:${usuarioLogado()?.usuario ?? 'anonimo'}`
+// Anotações do usuário, salvas no back (/notes/me): cada um vê só a sua, em qualquer computador.
+const anotacoes = ref('')
+const textoSalvo = ref('') // o que está no banco; serve para saber se há alteração pendente
+const salvoEm = ref(null)
+const carregandoAnotacoes = ref(false)
+const salvandoAnotacoes = ref(false)
+const erroAnotacoes = ref('')
 
-function lerAnotacoes() {
+const temAlteracao = computed(() => anotacoes.value !== textoSalvo.value)
+
+async function carregarAnotacoes() {
+  carregandoAnotacoes.value = true
+  erroAnotacoes.value = ''
   try {
-    return localStorage.getItem(chaveAnotacoes) ?? ''
-  } catch {
-    return ''
+    const nota = await buscarAnotacoes()
+    anotacoes.value = textoSalvo.value = nota.content ?? ''
+    salvoEm.value = nota.updatedAt ? new Date(nota.updatedAt) : null
+  } catch (e) {
+    erroAnotacoes.value = `Não foi possível carregar suas anotações. ${e.message}`
+  } finally {
+    carregandoAnotacoes.value = false
   }
 }
 
-const anotacoes = ref(lerAnotacoes())
-const salvoEm = ref(null)
-
-watch(anotacoes, (texto) => {
+async function salvarNotas() {
+  if (!temAlteracao.value || salvandoAnotacoes.value) return
+  salvandoAnotacoes.value = true
+  erroAnotacoes.value = ''
+  const texto = anotacoes.value
   try {
-    localStorage.setItem(chaveAnotacoes, texto)
-    salvoEm.value = new Date()
-  } catch {
-    // Navegador bloqueou o armazenamento: o texto continua na tela, só não fica salvo.
+    const nota = await salvarAnotacoes(texto)
+    textoSalvo.value = texto
+    salvoEm.value = nota.updatedAt ? new Date(nota.updatedAt) : new Date()
+  } catch (e) {
+    erroAnotacoes.value = `Não foi possível salvar. ${e.message}`
+  } finally {
+    salvandoAnotacoes.value = false
   }
-})
+}
+
+// Ctrl+S (ou Cmd+S) dentro do campo salva, sem abrir o "Salvar página" do navegador.
+function atalhoSalvar(evento) {
+  if ((evento.ctrlKey || evento.metaKey) && evento.key.toLowerCase() === 's') {
+    evento.preventDefault()
+    salvarNotas()
+  }
+}
+
+// Avisa antes de fechar/recarregar a aba com texto não salvo.
+function avisarSaida(evento) {
+  if (temAlteracao.value) {
+    evento.preventDefault()
+    evento.returnValue = ''
+  }
+}
+
+onMounted(() => window.addEventListener('beforeunload', avisarSaida))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', avisarSaida))
 
 const primeiroNome = (usuarioLogado()?.nome ?? '').trim().split(/\s+/)[0]
 
@@ -216,6 +255,7 @@ function exportarCSV() {
 onMounted(() => {
   if (veDashboard) carregarDashboard()
   else carregando.value = false
+  if (veAnotacoes) carregarAnotacoes()
 })
 </script>
 
@@ -250,39 +290,11 @@ onMounted(() => {
       </button>
     </section>
 
-    <!-- Anotações: no lugar do dashboard para quem não é GESTOR -->
-    <section
-      v-if="!veDashboard"
-      class="rounded-xl border border-slate-800 bg-slate-900/60 p-5"
-    >
-      <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 class="font-semibold text-white">
-          Minhas anotações
-        </h2>
-        <p class="text-xs text-slate-500">
-          Ficam salvas só neste navegador.
-        </p>
-      </div>
-
-      <label for="anotacoes" class="sr-only">Minhas anotações</label>
-      <textarea
-        id="anotacoes"
-        v-model="anotacoes"
-        rows="10"
-        placeholder="Escreva aqui o que quiser lembrar: imóveis para revisar, dúvidas, pendências..."
-        class="w-full resize-y rounded-lg border border-slate-800 bg-slate-950/40 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-500/60 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
-      />
-
-      <p class="mt-2 h-4 text-xs text-slate-500">
-        <template v-if="salvoEm">
-          Salvo às {{ salvoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) }}
-        </template>
-      </p>
-    </section>
+    <template v-if="veDashboard">
 
     <!-- Carregamento -->
     <div
-      v-else-if="carregando"
+      v-if="carregando"
       class="rounded-xl border border-slate-800 bg-slate-900/50 p-8 text-center text-slate-400"
     >
       Carregando informações do dashboard...
@@ -460,5 +472,58 @@ onMounted(() => {
       </section>
 
     </template>
+
+    </template>
+
+    <!-- Anotações: para quem não é GESTOR (Analista sozinhas; Auditor abaixo do dashboard) -->
+    <section
+      v-if="veAnotacoes"
+      class="rounded-xl border border-slate-800 bg-slate-900/60 p-5"
+    >
+      <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 class="font-semibold text-white">
+          Minhas anotações
+        </h2>
+        <p class="text-xs text-slate-500">
+          Só você vê. Ficam salvas na sua conta.
+        </p>
+      </div>
+
+      <label for="anotacoes" class="sr-only">Minhas anotações</label>
+      <textarea
+        id="anotacoes"
+        v-model="anotacoes"
+        :rows="veDashboard ? 5 : 10"
+        maxlength="20000"
+        :disabled="carregandoAnotacoes"
+        :placeholder="carregandoAnotacoes ? 'Carregando suas anotações...' : 'Escreva aqui o que quiser lembrar: imóveis para revisar, dúvidas, pendências...'"
+        @keydown="atalhoSalvar"
+        class="w-full resize-y rounded-lg border border-slate-800 bg-slate-950/40 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-500/60 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:opacity-60"
+      />
+
+      <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <p
+          :class="['text-xs', erroAnotacoes ? 'text-rose-300' : temAlteracao ? 'text-amber-300' : 'text-slate-500']"
+          aria-live="polite"
+        >
+          <template v-if="erroAnotacoes">{{ erroAnotacoes }}</template>
+          <template v-else-if="salvandoAnotacoes">Salvando...</template>
+          <template v-else-if="temAlteracao">Alterações não salvas</template>
+          <template v-else-if="salvoEm">
+            Salvo em {{ formatarData(salvoEm) }}
+          </template>
+        </p>
+
+        <button
+          type="button"
+          @click="salvarNotas"
+          :disabled="!temAlteracao || salvandoAnotacoes || carregandoAnotacoes"
+          title="Salvar (Ctrl+S)"
+          class="rounded-md bg-gradient-to-r from-cyan-500 to-teal-400 px-4 py-1.5 text-xs font-semibold text-slate-950 shadow-md shadow-cyan-500/20 transition hover:-translate-y-0.5 hover:shadow-cyan-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+        >
+          {{ salvandoAnotacoes ? 'Salvando...' : 'Salvar' }}
+        </button>
+      </div>
+    </section>
   </main>
 </template>
