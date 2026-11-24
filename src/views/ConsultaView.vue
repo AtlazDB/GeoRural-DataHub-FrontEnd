@@ -452,7 +452,7 @@ async function calcular() {
  * Marca (ou desmarca, se clicar de novo) um imóvel e busca a geometria
  * completa dele para o destaque. Devolve true se ficou selecionado.
  */
-function alternarSelecao(codigo) {
+function alternarSelecao(codigo, { centralizar = false } = {}) {
   const pedido = ++selecaoAtual
   destaque.value = null
 
@@ -467,7 +467,14 @@ function alternarSelecao(codigo) {
   mostrarIndicadores()
   buscarImovel(codigo)
     .then((imovel) => {
-      if (pedido === selecaoAtual) destaque.value = imovel
+      if (pedido !== selecaoAtual) return
+      destaque.value = imovel
+      // No celular o painel abre embaixo e pode cobrir o imóvel tocado: espera ele assumir o
+      // tamanho (a folga do mapa vem do ResizeObserver) e centraliza na parte que sobra.
+      if (centralizar && !telaLarga.value) {
+        nextTick(() => requestAnimationFrame(() => requestAnimationFrame(
+          () => mapaRef.value?.centralizar(imovel.geometria))))
+      }
     })
     .catch((e) => {
       if (pedido === selecaoAtual) erroMapa.value = e.message
@@ -487,9 +494,10 @@ function selecionarDaTabela(item) {
   if (alternarSelecao(item.codImovel)) mapaRef.value?.enquadrar(item)
 }
 
-// Do mapa: o usuário já está olhando para o imóvel.
+// Do mapa: o usuário já está olhando para o imóvel. Na tela larga ele fica onde está;
+// no celular o painel cobre a metade de baixo, então o mapa centraliza o imóvel acima dele.
 function selecionarDoMapa(codigo) {
-  alternarSelecao(codigo)
+  alternarSelecao(codigo, { centralizar: true })
 }
 
 // Trocar o município ou a situação busca na hora; digitar o código espera

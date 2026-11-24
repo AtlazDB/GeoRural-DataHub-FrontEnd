@@ -214,8 +214,10 @@ onBeforeUnmount(() => {
     </p>
 
     <ul v-else class="divide-y divide-slate-800/80 rounded-xl border border-slate-800 bg-slate-900/40 px-4">
-      <li v-for="u in usuariosOrdenados" :key="u.id" class="flex flex-wrap items-center gap-3 py-3">
-        <div :class="['min-w-0 flex-1', !u.ativo && 'opacity-50']">
+      <!-- Celular: nome e e-mail na largura toda, perfis embaixo e, por último, a chave e o botão.
+           A partir do md volta a ser uma linha só. -->
+      <li v-for="u in usuariosOrdenados" :key="u.id" class="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
+        <div :class="['min-w-0 basis-full md:basis-0 md:flex-1', !u.ativo && 'opacity-50']">
           <p class="truncate text-sm font-medium text-slate-100">
             {{ u.nome }}
             <span class="ml-1 font-mono text-xs font-normal text-slate-500">{{ u.username }}</span>
@@ -223,7 +225,7 @@ onBeforeUnmount(() => {
           <p class="truncate text-xs text-slate-400">{{ u.email || 'sem e-mail' }}</p>
         </div>
 
-        <div class="flex flex-wrap justify-end gap-1.5">
+        <div class="flex basis-full flex-wrap gap-1.5 md:basis-auto md:justify-end">
           <span
             v-for="p in u.perfis"
             :key="p"
@@ -265,7 +267,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
 
-        <BaseButton variante="fantasma" tamanho="sm" class="shrink-0" @click="editando = u">
+        <BaseButton variante="fantasma" tamanho="sm" class="ml-auto shrink-0 md:ml-0" @click="editando = u">
           Editar acesso
         </BaseButton>
       </li>

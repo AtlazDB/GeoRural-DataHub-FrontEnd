@@ -482,7 +482,18 @@ function enquadrar({ minLon, minLat, maxLon, maxLat }) {
   )
 }
 
-defineExpose({ enquadrar })
+/**
+ * Celular: leva o imóvel para o meio da parte do mapa que o painel não cobre. Não aproxima o
+ * zoom (maxZoom = o atual); só afasta se o imóvel não couber na parte visível.
+ */
+function centralizar(geometria) {
+  if (!mapa || !geometria) return
+  const limites = L.geoJSON(geometria).getBounds()
+  if (!limites.isValid()) return
+  mapa.fitBounds(limites, { ...margens(24), maxZoom: mapa.getZoom() })
+}
+
+defineExpose({ enquadrar, centralizar })
 </script>
 
 <template>

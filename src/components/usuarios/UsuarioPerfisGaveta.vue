@@ -274,12 +274,13 @@ async function salvar() {
           Para quando a pessoa perdeu ou esqueceu a senha. A senha nova é provisória: no próximo login
           ela escolhe outra.
         </p>
-        <div class="mt-3 flex gap-2">
+        <!-- Celular: o campo ocupa a linha toda e os botões vão para baixo dele. -->
+        <div class="mt-3 flex flex-wrap gap-2 sm:flex-nowrap">
           <label class="sr-only" for="senha-nova">Senha provisória nova</label>
           <input
             id="senha-nova"
             v-model="novaSenha"
-            class="input font-mono"
+            class="input basis-full font-mono sm:basis-auto"
             autocomplete="new-password"
             placeholder="Senha provisória nova"
             :disabled="redefinindo"
