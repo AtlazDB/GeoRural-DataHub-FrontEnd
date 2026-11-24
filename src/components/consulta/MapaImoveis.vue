@@ -348,6 +348,10 @@ function alternarCamada(id) {
   const nome = camadasDisponiveis.value.find((c) => c.id === id)?.nome ?? id
   const camada = L.geoJSON(null, {
     style: { color: cor, weight: 1.2, fillColor: cor, fillOpacity: 0.25 },
+    // Camada de pontos (ex.: escolas): círculo na cor da camada, como os focos. Sem isto o
+    // Leaflet usaria o alfinete padrão, cuja imagem não entra no build do Vite (ícone quebrado).
+    pointToLayer: (_feature, posicao) =>
+      L.circleMarker(posicao, { radius: 4, color: cor, weight: 1, fillColor: cor, fillOpacity: 0.85 }),
     onEachFeature: (feature, poligono) => poligono.bindPopup(() => montarPopupCamada(nome, feature.properties)),
   }).addTo(mapa)
   camadasExtras.set(id, camada)
